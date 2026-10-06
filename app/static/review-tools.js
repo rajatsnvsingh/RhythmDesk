@@ -27,8 +27,8 @@ async function inspect(id,force=false){
     editor={id,draft:RhythmModel.draft(d,manual),baseline:null,manual,editing:manual,rows:new Set(),selected:new Set(),busy:false,stale:false};
     editor.baseline=RhythmModel.copy(editor.draft);
     if(old?.id===id){editor.editing=old.editing;editor.rows=old.rows;editor.selected=old.selected;}
-    renderInspector();$('review-body').scrollTop=scroll;if(!inspector.open)inspector.showModal();
-  }catch(e){feedback(e.message);}
+    renderInspector();$('review-body').scrollTop=scroll;if(!inspector.open)inspector.showModal();return true;
+  }catch(e){feedback(e.message);return false;}
 }
 async function pollInspector(){
   if(!inspector.open||!editor||editor.busy)return;
@@ -150,7 +150,7 @@ async function saveDraft(){
   if(!editor||editor.busy||editor.stale)return;
   const invalid=[...inspector.querySelectorAll('input.edit-field,.edit-field input')].find(n=>!n.disabled&&!n.checkValidity());if(invalid){editor.editing=true;$('review-body').classList.add('editing');invalid.reportValidity();feedback('Complete the highlighted metadata before saving.');return;}
   const id=editor.id,manual=editor.manual;editor.busy=true;updateEditorState();
-  try{await api(`/api/jobs/${id}/${manual?'manual':'edit'}`,RhythmModel.payload(editor.draft,detail.job.revision,manual));editor.busy=false;editor.baseline=RhythmModel.copy(editor.draft);await inspect(id,true);toast(manual?'Manual preparation queued. Nothing publishes automatically.':'Changes saved as a new revision. Inspect it before approval.');await refresh();}
+  try{await api(`/api/jobs/${id}/${manual?'manual':'edit'}`,RhythmModel.payload(editor.draft,detail.job.revision,manual));editor.baseline=RhythmModel.copy(editor.draft);if(!await inspect(id,true)){editor.stale=true;throw new Error('Saved on the server, but the current revision could not reload. Close and refresh before further edits or approval.');}toast(manual?'Manual preparation queued. Nothing publishes automatically.':'Changes saved as a new revision. Inspect it before approval.');await refresh();}
   catch(e){if(editor?.id===id){editor.busy=false;updateEditorState();}feedback(e.message);}
 }
 async function runJobAction(action,data){const id=editor.id;editor.busy=true;updateEditorState();try{await api(`/api/jobs/${id}/${action}`,data);editor.busy=false;if(action==='ungroup'){inspector.close();view('incoming');}else await inspect(id,true);await refresh();toast(action==='retry'?'Retry queued; inspector stays open.':'Tracks returned to Incoming.');}catch(e){if(editor?.id===id){editor.busy=false;updateEditorState();}feedback(e.message);}}
