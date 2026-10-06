@@ -159,6 +159,16 @@ class LibrarySwitchTests(unittest.TestCase):
                     switch.install_plan(Path(folder), configuration())
             self.assertEqual(active.read_text(), 'previous protected configuration')
 
+    def test_compose_may_omit_false_library_flags_without_changing_the_plan(self):
+        expected, _, _ = switch.library_plan(configuration(), '/srv/media/music/rhythm-attic')
+        rendered = copy.deepcopy(expected)
+        switch.binding(rendered['services']['publisher'], switch.LIBRARY_TARGET).pop('read_only')
+        for name in ('web', 'publisher'):
+            switch.binding(rendered['services'][name], switch.LIBRARY_TARGET).pop('bind')
+        self.assertEqual(switch.canonical_plan(rendered), switch.canonical_plan(expected))
+        switch.binding(rendered['services']['publisher'], switch.LIBRARY_TARGET)['read_only'] = True
+        self.assertNotEqual(switch.canonical_plan(rendered), switch.canonical_plan(expected))
+
     def test_main_dry_run_never_creates_library_or_installs_plan(self):
         with tempfile.TemporaryDirectory() as folder:
             control = Path(folder)

@@ -147,6 +147,16 @@ def compose_literals(value):
     return value
 
 
+def canonical_plan(config):
+    """Compose may omit false/default flags when re-rendering long-form binds."""
+    result = copy.deepcopy(config)
+    for name in ('web', 'publisher'):
+        mount = binding(result['services'][name], LIBRARY_TARGET)
+        mount.setdefault('read_only', False)
+        mount.setdefault('bind', {}).setdefault('create_host_path', False)
+    return result
+
+
 def install_plan(project, config):
     path = CONTROL / 'compose.yaml'
     backup = path.with_name('compose.before-library-' + str(time.time_ns()) + '.yaml')
@@ -162,7 +172,7 @@ def install_plan(project, config):
             output.flush()
             os.fsync(output.fileno())
         rendered = json.loads(compose(project, temporary, 'config', '--format', 'json').stdout)
-        if rendered != config:
+        if canonical_plan(rendered) != canonical_plan(config):
             raise ValueError('Re-rendered plan differs; protected configuration was not replaced')
         temporary.replace(path)
     finally:
@@ -198,7 +208,7 @@ def main():
         print('New library:    ', library)
         print('Staging, state, read-only drawer, authentication and approval rules stay unchanged.')
         print('No test albums or other music will be copied, edited or deleted.')
-        if previous == str(library) and config == updated:
+        if previous == str(library) and canonical_plan(config) == canonical_plan(updated):
             print('This library is already configured. No changes made.')
             return
         fresh_library(library)
