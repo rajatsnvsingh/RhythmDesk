@@ -1,0 +1,80 @@
+name: rhythm-curator
+x-runtime: &runtime
+  build: .
+  image: nexus/rhythm-curator:local
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp]
+  group_add: ["10000"]
+  environment: &environment
+    CURATOR_ROOT: /srv/media/music
+    BEETS_CONFIG: /etc/rhythm-curator/config.yaml
+    PYTHONUNBUFFERED: "1"
+services:
+  worker:
+    <<: *runtime
+    user: "${WORKER_UID:-10001}:10000"
+    command: [python, app/worker.py]
+    networks: [curator]
+    environment:
+      <<: *environment
+      STABLE_SECONDS: "${STABLE_SECONDS:-180}"
+    volumes:
+      - ${STAGING_PATH:-./data/staging}:/srv/media/music/staging
+      - ${STATE_PATH:-./data/state}:/srv/media/music/curator-state
+      - ${STATE_PATH:-./data/state}/approvals:/srv/media/music/curator-state/approvals:ro
+    # Deliberately no library or publisher-socket mount.
+  web:
+    <<: *runtime
+    user: "${UI_UID:-10002}:10000"
+    command: [python, app/server.py, --bind, 0.0.0.0]
+    networks: [curator]
+    ports: ["127.0.0.1:${UI_PORT:-8765}:8765"]
+    environment:
+      <<: *environment
+      CURATOR_AUTH_REQUIRED: ${CURATOR_AUTH_REQUIRED:-1}
+      CURATOR_UI_TOKEN: ${CURATOR_UI_TOKEN:-}
+      CURATOR_ALLOWED_HOSTS: ${CURATOR_ALLOWED_HOSTS:-127.0.0.1,localhost}
+      CURATOR_SECURE_COOKIE: ${CURATOR_SECURE_COOKIE:-0}
+      CURATOR_PUBLISH_SOCKET: /run/rhythm-publisher/publish.sock
+      CURATOR_HOST_STAGING: ${STAGING_PATH:-./data/staging}
+      CURATOR_HOST_STATE: ${STATE_PATH:-./data/state}
+      CURATOR_HOST_LIBRARY: ${LIBRARY_PATH:?Set LIBRARY_PATH}
+      CURATOR_SOURCE_ROOT: /mnt/music-source
+      CURATOR_HOST_SOURCE: ${SOURCE_PATH:-/srv/media/music}
+      STABLE_SECONDS: "${STABLE_SECONDS:-180}"
+    volumes:
+      - ${STAGING_PATH:-./data/staging}:/srv/media/music/staging
+      - ${STATE_PATH:-./data/state}:/srv/media/music/curator-state
+      - ${LIBRARY_PATH:?Set LIBRARY_PATH to the existing Rhythm Attic}:/srv/media/music/rhythm-attic:ro
+      - ${SOURCE_PATH:-/srv/media/music}:/mnt/music-source:ro
+      - publisher-socket:/run/rhythm-publisher:ro
+      - ${STATE_PATH:-./data/state}/approvals:/srv/media/music/curator-state/approvals:ro
+    depends_on: [worker, publisher]
+  publisher:
+    <<: *runtime
+    user: "${PUBLISHER_UID:-10003}:10000"
+    command: [python, app/publisher.py]
+    network_mode: none
+    environment:
+      <<: *environment
+      CURATOR_UI_UID: ${UI_UID:-10002}
+      CURATOR_PUBLISH_SOCKET: /run/rhythm-publisher/publish.sock
+    volumes:
+      - ${STAGING_PATH:-./data/staging}/Curated:/srv/media/music/staging/Curated:ro
+      - ${STATE_PATH:-./data/state}/approvals:/srv/media/music/curator-state/approvals
+      - ${STATE_PATH:-./data/state}/taxonomy:/srv/media/music/curator-state/taxonomy:ro
+      - ${LIBRARY_PATH:?Set LIBRARY_PATH to the existing Rhythm Attic}:/srv/media/music/rhythm-attic
+      - publisher-socket:/run/rhythm-publisher
+volumes:
+  publisher-socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=${PUBLISHER_UID:-10003},gid=10000,mode=0770
+networks:
+  curator:
+    driver: bridge

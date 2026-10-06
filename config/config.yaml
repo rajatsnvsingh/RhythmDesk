@@ -1,0 +1,50 @@
+directory: /srv/media/music/staging/Curated
+library: /srv/media/music/curator-state/musiclibrary.db
+
+import:
+    copy: yes
+    move: no
+    write: yes
+    quiet: yes
+    quiet_fallback: skip
+    timid: no
+    log: /srv/media/music/curator-state/logs/beets-import.log
+    resume: no
+    duplicate_action: skip
+    bell: no
+
+# A lower score is a better MusicBrainz match. Quiet imports only accept a
+# strong recommendation; keep the threshold tight and route everything else to
+# review via quiet_fallback.
+match:
+    strong_rec_thresh: 0.03
+    medium_rec_thresh: 0.08
+    max_rec:
+        missing_tracks: medium
+        unmatched_tracks: medium
+    track_length_grace: 5
+    track_length_max: 20
+
+paths:
+    default: $albumartist/$album ($year)/$track - $title
+    singleton: Non-Album/$artist/$title
+    comp: Various Artists/$album ($year)/$track - $title
+
+replace:
+    '[\\/]': _
+    '^\.': _
+
+art_filename: cover
+per_disc_numbering: no
+plugins: musicbrainz fetchart embedart scrub
+fetchart:
+    auto: yes
+    cautious: yes
+    minwidth: 800
+    enforce_ratio: "20%"
+embedart:
+    auto: yes
+    ifempty: no
+    remove_art_file: yes
+scrub:
+    auto: yes

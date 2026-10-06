@@ -1,0 +1,35 @@
+'use strict';
+const drawerPanel=document.createElement('section');drawerPanel.className='panel settings-panel';
+drawerPanel.innerHTML='<div class="panel-heading"><h2>Music drawer · read only</h2><button id="browse-drawer" class="primary">Browse Nexus music</button></div><p>Select existing files or folders on Nexus and copy them into Incoming. Source files are never moved or edited. Scan remains your decision.</p><p id="drawer-import-status" role="status"></p>';
+$('incoming').querySelector('.section-heading').after(drawerPanel);
+const drawer=document.createElement('dialog');drawer.id='drawer-dialog';drawer.innerHTML='<div class="dialog-heading"><h2>Browse music drawer</h2><button id="close-drawer" class="quiet" aria-label="Close music drawer">✕</button></div><p id="drawer-location" class="path-notes"></p><div class="toolbar"><button id="drawer-up" class="secondary">↑ Parent</button><button id="drawer-root" class="secondary">Root</button><input id="drawer-search" type="search" placeholder="Filter this folder"></div><p id="drawer-message" role="status"></p><div id="drawer-entries" class="drawer-entries"></div><div class="pagination"><button id="drawer-prev" class="secondary">Previous</button><span id="drawer-page"></span><button id="drawer-next" class="secondary">Next</button></div><div class="dialog-actions"><span id="drawer-count">0 selected</span><button id="drawer-copy" class="primary" disabled>Copy selected into Incoming</button></div>';document.body.append(drawer);
+let drawerPath='',drawerOffset=0,drawerData=null;const drawerSelected=new Set();
+function selectionCount(){$('drawer-count').textContent=drawerSelected.size+' selected';$('drawer-copy').disabled=!drawerSelected.size;}
+async function browseDrawer(path='',offset=0){
+  try{drawerData=await api('/api/source?'+new URLSearchParams({path,offset,q:$('drawer-search').value}));drawerPath=path;drawerOffset=offset;
+    $('drawer-location').textContent=(drawerData.source.host||'Source')+' / '+(path||'.');$('drawer-message').textContent='Operational staging, state and published-library folders are excluded. Selections persist while browsing.';
+    $('drawer-entries').innerHTML=drawerData.items.map(item=>`<div class="drawer-entry"><input type="checkbox" aria-label="Select ${esc(item.name)}" data-source-select="${esc(item.path)}" ${drawerSelected.has(item.path)?'checked':''}><div>${item.directory?`<button class="text-button" data-source-open="${esc(item.path)}">📁 ${esc(item.name)}</button>`:`<strong>${esc(item.name)}</strong>`}<small>${item.directory?'Folder · includes subfolders':bytes(item.bytes)}</small></div></div>`).join('')||'<p>No files found in this folder.</p>';
+    $('drawer-page').textContent=`${Math.min(offset+1,drawerData.total)}–${Math.min(offset+200,drawerData.total)} / ${drawerData.total}`;$('drawer-prev').disabled=offset===0;$('drawer-next').disabled=offset+200>=drawerData.total;$('drawer-up').disabled=!path;selectionCount();
+  }catch(e){$('drawer-message').textContent=e.message+' Check the read-only source mount and its permissions in Settings.';$('drawer-entries').replaceChildren();}
+}
+$('browse-drawer').onclick=()=>{drawer.showModal();browseDrawer();};$('close-drawer').onclick=()=>drawer.close();
+$('drawer-up').onclick=()=>{$('drawer-search').value='';browseDrawer(drawerData.parent==='.'?'':drawerData.parent);};$('drawer-root').onclick=()=>{$('drawer-search').value='';browseDrawer();};
+$('drawer-prev').onclick=()=>browseDrawer(drawerPath,Math.max(0,drawerOffset-200));$('drawer-next').onclick=()=>browseDrawer(drawerPath,drawerOffset+200);
+let drawerSearchTimer;$('drawer-search').oninput=()=>{clearTimeout(drawerSearchTimer);drawerSearchTimer=setTimeout(()=>browseDrawer(drawerPath),250);};
+drawer.addEventListener('click',e=>{const button=e.target.closest('[data-source-open]');if(button){$('drawer-search').value='';browseDrawer(button.dataset.sourceOpen);}});
+drawer.addEventListener('change',e=>{if(e.target.dataset.sourceSelect){e.target.checked?drawerSelected.add(e.target.dataset.sourceSelect):drawerSelected.delete(e.target.dataset.sourceSelect);selectionCount();}});
+let importPoll;
+async function pollImport(id){
+  try{const result=await api('/api/source/import?id='+encodeURIComponent(id));$('drawer-import-status').textContent=`${result.status} · ${number(result.files)} files · ${bytes(result.bytes)} ${result.current||result.reason||result.folder||''}`;
+    if(result.status==='Copying'){importPoll=setTimeout(()=>pollImport(id),1500);}else{localStorage.removeItem('rhythm-source-import');$('drawer-copy').disabled=!drawerSelected.size;await refresh();}
+  }catch(e){$('drawer-import-status').textContent=e.message;}
+}
+$('drawer-copy').onclick=async()=>{try{$('drawer-copy').disabled=true;const result=await api('/api/source/import',{paths:[...drawerSelected]});drawer.close();drawerSelected.clear();localStorage.setItem('rhythm-source-import',result.id);pollImport(result.id);}catch(e){$('drawer-message').textContent=e.message;selectionCount();}};
+const sourceSettings=document.createElement('section');sourceSettings.className='panel settings-panel';sourceSettings.innerHTML='<div class="panel-heading"><h2>Read-only ingestion source</h2></div><p id="source-mapping"></p><form id="source-settings"><label>Drawer subfolder inside the Docker mount<input name="subdirectory" placeholder="Leave blank to browse the entire mount"></label><p>Changing this limits the picker to a subfolder. Changing the host mount requires an administrator to update SOURCE_PATH in Docker configuration.</p><button class="primary">Save source folder</button></form>';$('settings').append(sourceSettings);
+const sourceRender=renderSettings;renderSettings=function(s){sourceRender(s);if(s.source){$('source-mapping').textContent=`${s.source.host} → ${s.source.mount} · ${s.source.available?'Available · read only':'Not mounted or readable'}`;$('source-settings').elements.subdirectory.value=s.source.subdirectory==='.'?'':s.source.subdirectory;}};
+$('source-settings').onsubmit=async e=>{e.preventDefault();try{await api('/api/settings/source',{subdirectory:e.target.elements.subdirectory.value.trim()});drawerSelected.clear();await loadSettings();toast('Read-only source folder saved');}catch(err){toast(err.message);}};
+// Make data tables usable as labelled cards on narrow screens, including dynamically rendered ones.
+function mobileLabels(){document.querySelectorAll('table').forEach(table=>{const headings=Array.from(table.querySelectorAll('thead th'),x=>x.textContent.trim());table.querySelectorAll('tbody tr').forEach(row=>Array.from(row.children).forEach((cell,i)=>{cell.dataset.label=headings[i]||'';}));});}
+const responsiveRender=render;render=function(){responsiveRender();mobileLabels();};
+const responsiveInspect=inspect;inspect=async function(id){await responsiveInspect(id);mobileLabels();};
+const savedImport=localStorage.getItem('rhythm-source-import');if(savedImport){const restore=setInterval(()=>{if(csrf){clearInterval(restore);pollImport(savedImport);}},500);}
