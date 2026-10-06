@@ -112,6 +112,12 @@ Publisher updates can influence music inside their existing mounts. This is scop
 deployment authority, not protection against malicious application code.
 Re-running the installer refreshes protected deployment configuration snapshots.
 
+For an existing restricted deployment, an administrator can add the music drawer:
+`sudo python3 app/configure_source.py --project <absolute-project-directory> --source /srv/media/music`
+This backs up and updates only the protected web-service source mount. Source
+permissions are unchanged. Re-deploy normally afterward to recreate containers.
+The deployment key cannot execute this administrator command.
+
 Revoke new SSH connections without stopping the app:
 sudo mv /var/lib/rhythm-deploy-user/.ssh/authorized_keys /var/lib/rhythm-deploy-user/.ssh/authorized_keys.disabled
 Remove /etc/sudoers.d/rhythm-deploy when retiring the account. Revocation does not

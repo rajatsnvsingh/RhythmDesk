@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Administrator-only addition of a read-only drawer mount to the pinned deployment."""
+"""One-time administrator addition of a read-only drawer mount to pinned deployment."""
 import argparse
 import json
 import os

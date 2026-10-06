@@ -29,3 +29,15 @@ class SourceBrowserTests(unittest.TestCase):
     def test_restart_marks_unfinished_copy(self):
         job='b'*32;write_state(self.s,job,{'status':'Copying'})
         recover(self.s);self.assertEqual(state(self.s,job)['status'],'Interrupted')
+    def test_host_mapped_operational_folders_excluded(self):
+        folder=self.source/'curator-test/state';folder.mkdir(parents=True)
+        with patch.dict(os.environ,{'CURATOR_HOST_STATE':str(folder)}):
+            self.assertEqual(browse(self.s,'curator-test')['items'],[])
+            with self.assertRaises(ValueError):resolve(self.s,'curator-test/state')
+    def test_failed_copy_not_visible_in_incoming(self):
+        job='c'*32
+        with patch('source_browser.shutil.copyfileobj',side_effect=OSError('Simulated read failure')):
+            copy_batch(self.s,job,[self.source/'Artist'])
+        self.assertEqual(state(self.s,job)['status'],'Failed')
+        self.assertFalse((self.s.incoming/('Import-'+job)).exists())
+        self.assertEqual((self.source/'Artist/Album/song.mp3').read_bytes(),b'original audio')
