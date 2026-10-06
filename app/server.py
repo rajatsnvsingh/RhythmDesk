@@ -87,9 +87,10 @@ class Desk:
             tracks = [dict(row) for row in db.execute(f'SELECT * FROM tracks WHERE {where} ORDER BY updated DESC LIMIT ? OFFSET ?', [*values, limit, offset])]
             jobs = [dict(row) for row in db.execute('SELECT * FROM jobs ORDER BY updated DESC LIMIT 1000')]
             events = [dict(row) for row in db.execute('SELECT * FROM events ORDER BY id DESC LIMIT 100')]
-            meta = {row['key']: row['value'] for row in db.execute("SELECT * FROM meta WHERE key IN ('worker_heartbeat','last_scan','library_stats')")}
+            meta = {row['key']: row['value'] for row in db.execute("SELECT * FROM meta WHERE key IN ('worker_heartbeat','last_scan','library_stats') OR key LIKE 'progress:%'")}
         reconciled = False
         for job in jobs:
+            job['progress']=json.loads(meta.get('progress:'+job['id'],'null'))
             if job['status'] in ('Curated', 'Publishing'):
                 receipt = self.settings.state / 'approvals' / (job['id'] + '.json')
                 if receipt.exists():
@@ -147,10 +148,14 @@ class Desk:
         folder = self.job_folder(job)
         from mediafile import MediaFile
         for source in sources:
+            from metadata_clean import clean
+            source['suggested']={field:clean(source[field]) for field in ('title','artist','album','albumartist')}
             source['artwork'] = False
             try:
                 from artwork import usable_image
                 media = MediaFile(safe_child(self.settings.incoming, source['path']))
+                from taxonomy import read_labels
+                source.update(read_labels(media))
                 source['artwork'] = usable_image(media) is not None
                 source['artwork_invalid'] = bool(media.images) and not source['artwork']
             except (OSError, ValueError):
@@ -171,6 +176,8 @@ class Desk:
         if review and job['status'] == 'Curated':
             found = unknown(self.settings, review['tracks'])
             job['reason'] = 'Unapproved genres/tags: ' + json.dumps(found) if any(found.values()) else ''
+        from processing import read
+        job['progress']=read(self.settings,job_id)
         return {'job': job, 'review': review, 'sources': sources, 'log': log_text,
                 'unknown_labels': unknown(self.settings, review['tracks']) if review else {},
                 'destination_exists': bool(job['destination'] and (self.settings.library / job['destination']).exists())}
@@ -190,6 +197,7 @@ class Desk:
             if mode not in ('album','single','partial') or (mode=='single' and job['track_count']!=1):
                 raise ValueError('Single mode requires one track; choose album or partial')
             db.execute('UPDATE jobs SET mode=? WHERE id=?',(mode,job_id))
+            db.execute('DELETE FROM meta WHERE key=?',('progress:'+job_id,))
             db.execute("UPDATE jobs SET status='Queued',release_id=?,reason='',updated=? WHERE id=?", (release_id or job['release_id'], time.time(), job_id))
             db.execute('INSERT OR REPLACE INTO meta VALUES(?,?)', ('force_artwork:' + job_id, json.dumps(force_artwork)))
         event(self.settings, 'Retry queued with the chosen release', job_id)
@@ -251,6 +259,11 @@ class Desk:
                 media.save()
             normalize_output(audio)
             new_record = review_record(audio, len(edits))
+            if record.get('mode')=='manual':
+                identities={(int(edit['disc']),int(edit['track'])):original.get('source_id') for original,edit in zip(record['tracks'],edits)}
+                for track in new_record['tracks']:
+                    source_id=identities.get((track['disc'],track['track']))
+                    if source_id:track['source_id']=source_id
             if 'mode' in record:
                 from common import revision
                 new_record['mode'] = record['mode']
@@ -400,7 +413,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self.headers.get('Content-Type', '').startswith('application/json'):
             raise ValueError('JSON body required')
         length = int(self.headers.get('Content-Length', '0'))
-        if not 0 < length <= 512000:
+        limit=16*1024**2 if self.path.startswith('/api/jobs/') and self.path.endswith('/manual') else 512000
+        if not 0 < length <= limit:
             raise ValueError('Request too large or empty')
         return json.loads(self.rfile.read(length))
 
@@ -408,7 +422,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.check_origin()
             url = urlparse(self.path)
-            if url.path in ('/', '/app.js', '/style.css', '/settings.js', '/settings.css', '/taxonomy.js', '/review-tools.js', '/modes.js', '/drawer.js', '/mobile.css'):
+            if url.path in ('/', '/app.js', '/style.css', '/settings.js', '/settings.css', '/taxonomy.js', '/review-tools.js', '/modes.js', '/drawer.js', '/mobile.css', '/manual.js'):
                 file = STATIC / ('index.html' if url.path == '/' else url.path[1:])
                 self.send_file(file)
                 return
@@ -581,7 +595,11 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path.startswith('/api/jobs/'):
                 parts = self.path.split('/')
                 job_id, action = unquote(parts[3]), parts[4]
-                if action == 'retry':
+                if action == 'manual':
+                    from manual import queue
+                    queue(self.desk.settings,job_id,data)
+                    self.json({'ok':True})
+                elif action == 'retry':
                     self.desk.retry(job_id, data.get('release_id', ''), data.get('force_artwork', False),data.get('mode'))
                     self.json({'ok': True})
                 elif action == 'ungroup':

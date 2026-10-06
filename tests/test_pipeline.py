@@ -39,6 +39,21 @@ class PipelineTests(unittest.TestCase):
         self.env.stop()
         self.temp.cleanup()
 
+    def test_matching_cleans_website_tags_only_in_copies(self):
+        from mediafile import MediaFile
+        source=track(self.settings.incoming/'vendor.flac',album='Signals [songs.pk]',title='First Light - MP3Khan.Com')
+        from common import sha256
+        original=sha256(source)
+        scan(self.settings)
+        with connect(self.settings) as db:ids=[r['id'] for r in db.execute('SELECT id FROM tracks')]
+        job=create_job(self.settings,ids,mode='album');process_job(self.settings,job)
+        with connect(self.settings) as db:self.assertEqual(db.execute('SELECT status FROM jobs WHERE id=?',(job,)).fetchone()['status'],'Curated')
+        record=json.loads((self.settings.curated/job/'REVIEW.json').read_text())
+        self.assertEqual(record['tracks'][0]['title'],'First Light')
+        self.assertEqual(record['tracks'][0]['album'],'Signals')
+        self.assertEqual(sha256(source),original)
+        self.assertEqual(MediaFile(source).title,'First Light - MP3Khan.Com')
+
     def test_artwork_policy_complete_and_partial(self):
         from worker import artwork_config
         work = Path(self.temp.name) / 'art-input'

@@ -100,7 +100,7 @@ def create_job(settings, track_ids, artist='', album='', year=0, release_id='', 
         release_id = str(uuid.UUID(release_id))
     job_id = 'work.' + uuid.uuid4().hex[:16]
     mode = ('single' if len(track_ids)==1 else 'album') if mode=='auto' else mode
-    if mode not in ('album','single','partial') or (mode=='single' and len(track_ids)!=1):
+    if mode not in ('album','single','partial','manual') or (mode=='single' and len(track_ids)!=1):
         raise ValueError('Choose complete album, single track (one file), or partial album')
     with connect(settings) as db:
         db.execute('BEGIN IMMEDIATE')
@@ -119,6 +119,8 @@ def create_job(settings, track_ids, artist='', album='', year=0, release_id='', 
         for row in rows:
             db.execute("UPDATE tracks SET status='Assigned',job_id=?,updated=? WHERE id=?", (job_id, now, row['id']))
         db.execute('UPDATE jobs SET mode=? WHERE id=?',(mode,job_id))
+        if mode=='manual':
+            db.execute("UPDATE jobs SET status='Needs review',reason='Enter manual metadata to prepare this release' WHERE id=?",(job_id,))
     event(settings, f'Queued {artist} / {album}: {len(rows)} tracks', job_id)
     return job_id
 
@@ -181,6 +183,7 @@ def artwork_config(settings, folder, work, force=False):
 
 def process_job(settings, job_id):
     from mediafile import MediaFile
+    from processing import update
     with connect(settings) as db:
         db.execute('BEGIN IMMEDIATE')
         job = db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
@@ -190,17 +193,22 @@ def process_job(settings, job_id):
         rows = db.execute('SELECT * FROM tracks WHERE job_id=? ORDER BY disc,track,path', (job_id,)).fetchall()
         flag = db.execute('SELECT value FROM meta WHERE key=?', ('force_artwork:' + job_id,)).fetchone()
         force_artwork = bool(flag and flag['value'] == 'true')
+        manual_row=db.execute('SELECT value FROM meta WHERE key=?',('manual:'+job_id,)).fetchone()
+        manual_payload=json.loads(manual_row['value']) if manual_row else None
+    update(settings,job_id,'Preparing','Checking originals and copying tracks',0,len(rows),started=time.time())
     folder = safe_child(settings.review, job_id)
-    previous_curated = safe_child(settings.curated, job_id)
-    if previous_curated.exists():
-        previous_curated.rename(settings.review / (job_id + '.previous-' + uuid.uuid4().hex[:8]))
-    folder.mkdir(exist_ok=True)
     originals = folder / 'originals'
     work = folder / 'input'
     audio = folder / 'audio'
-    for directory in (originals, work, audio):
-        directory.mkdir(exist_ok=True)
     try:
+        previous_curated = safe_child(settings.curated, job_id)
+        if previous_curated.exists():
+            previous_curated.rename(settings.review / (job_id + '.previous-' + uuid.uuid4().hex[:8]))
+        folder.mkdir(exist_ok=True)
+        for directory in (originals, work, audio):
+            directory.mkdir(exist_ok=True)
+        if job['mode']=='manual' and not manual_payload:
+            raise ValueError('Manual metadata is missing; enter it in the inspector')
         # Retries regenerate outputs, leaving original copies intact.
         for directory in (work, audio):
             shutil.rmtree(directory)
@@ -228,33 +236,75 @@ def process_job(settings, job_id):
                 media.year = job['year']
             media.track = row['track'] or index
             media.disc = row['disc'] or 1
+            if job['mode']!='manual':
+                from metadata_clean import clean
+                for field in ('title','album','artist','albumartist'):
+                    before=getattr(media,field) or '';after=clean(before)
+                    if after!=before:
+                        setattr(media,field,after)
+                        event(settings,f'Cleaned matching {field}: {before!r} → {after!r}',job_id)
             media.save()
+            update(settings,job_id,'Preparing',source.name,index,len(rows))
         atomic_json(folder / 'SOURCES.json', [dict(row) for row in rows])
-        executable = os.environ.get('BEET', 'beet')
-        effective_config, complete_art = artwork_config(settings, folder, work, force_artwork)
-        event(settings, 'All source tracks have artwork: keeping embedded covers; fetching disabled' if complete_art
-              else 'Some source tracks lack artwork: fetched cover will update every track in the release', job_id)
-        command = [executable, '-vv', '-c', str(effective_config), '-l', str(folder / 'beets.db'),
-                   '-d', str(audio), 'import', '-q']
-        if job['mode'] in ('single','partial'):
-            command.append('-s')
-        elif job['release_id']:
-            command.extend(['-m', job['release_id']])
-        command.extend(['--', str(work)])
-        event(settings, f'Matching {job["artist"]} / {job["album"]}', job_id)
-        beets_settings = folder / 'beets-settings'
-        beets_settings.mkdir(exist_ok=True)
-        environment = dict(os.environ, BEETSDIR=str(beets_settings))
-        with (folder / 'BEETS.log').open('w', encoding='utf-8') as log:
-            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                           timeout=1800, check=True, env=environment)
+        if job['mode']=='manual':
+            from manual import apply
+            edits={edit['id']:edit for edit in manual_payload['tracks']}
+            for index,row in enumerate(rows,1):
+                source=work/f'{index:04d}{Path(row["path"]).suffix.lower()}'
+                target=audio/source.name;shutil.copy2(source,target)
+                apply(target,manual_payload,edits[row['id']])
+                update(settings,job_id,'Writing manual tags',edits[row['id']]['title'],index,len(rows))
+            atomic_json(folder/'MANUAL.json',dict(artist=job['artist'],album=job['album'],year=job['year'],
+                                                provenance='User-supplied metadata; completeness not verified',
+                                                custom_artwork=bool(manual_payload['artwork'])))
+            (folder/'BEETS.log').write_text('Manual mode: catalogue matching and artwork downloading bypassed. User-supplied metadata; explicit publication approval required.\n',encoding='utf-8')
+        else:
+            executable = os.environ.get('BEET', 'beet')
+            effective_config, complete_art = artwork_config(settings, folder, work, force_artwork)
+            event(settings, 'All source tracks have artwork: keeping embedded covers; fetching disabled' if complete_art
+                  else 'Some source tracks lack artwork: fetched cover will update every track in the release', job_id)
+            command = [executable, '-vv', '-c', str(effective_config), '-l', str(folder / 'beets.db'),
+                       '-d', str(audio), 'import', '-q']
+            if job['mode'] in ('single','partial'):
+                command.append('-s')
+            elif job['release_id']:
+                command.extend(['-m', job['release_id']])
+            command.extend(['--', str(work)])
+            event(settings, f'Matching {job["artist"]} / {job["album"]}', job_id)
+            beets_settings = folder / 'beets-settings';beets_settings.mkdir(exist_ok=True)
+            environment = dict(os.environ, BEETSDIR=str(beets_settings),PYTHONUNBUFFERED='1')
+            update(settings,job_id,'Matching','Waiting for MusicBrainz / Beets; no reliable percentage available')
+            with (folder / 'BEETS.log').open('w', encoding='utf-8') as log:
+                process=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT,stdin=subprocess.DEVNULL,env=environment)
+                deadline=time.monotonic()+1800
+                try:
+                    while process.poll() is None:
+                        if time.monotonic()>deadline:raise subprocess.TimeoutExpired(command,1800)
+                        with (folder/'BEETS.log').open('rb') as stream:
+                            stream.seek(max(0,(folder/'BEETS.log').stat().st_size-2000))
+                            lines=stream.read().decode('utf-8','replace').splitlines()
+                        message=next((line for line in reversed(lines) if any(term in line for term in ('Looking up:','search terms:','Found ','Skipping.','Searching for','Tagging '))), 'Waiting for MusicBrainz / Beets')
+                        update(settings,job_id,'Matching',message[:400])
+                        time.sleep(1)
+                    if process.returncode:raise subprocess.CalledProcessError(process.returncode,command)
+                finally:
+                    if process.poll() is None:
+                        process.kill();process.wait()
         if len(inventory(audio)) != len(rows):
             raise ValueError('Match skipped or incomplete: read the Beets log and correct the release')
         if job['mode'] in ('single','partial'):
+            update(settings,job_id,'Resolving release','Checking recording-to-release membership')
             from trackmatch import resolve_release
-            resolve_release([audio / name for name in inventory(audio)],job['album'],job['release_id'])
+            from metadata_clean import clean
+            resolve_release([audio / name for name in inventory(audio)],clean(job['album']),job['release_id'])
+        update(settings,job_id,'Renaming','Creating clean, numbered filenames')
         normalize_output(audio)
+        update(settings,job_id,'Validating','Verifying tags, track count, artwork and review revision')
         record = review_record(audio, len(rows))
+        if job['mode']=='manual':
+            identities={(edit['disc'],edit['track']):edit['id'] for edit in manual_payload['tracks']}
+            for track in record['tracks']:
+                track['source_id']=identities[(track['disc'],track['track'])]
         record['mode'] = job['mode']
         from common import revision
         record['revision'] = revision(record)
@@ -270,12 +320,14 @@ def process_job(settings, job_id):
             db.execute("UPDATE jobs SET status='Curated',revision=?,destination=?,path=?,reason=?,updated=? WHERE id=?",
                        (record['revision'], record['destination'], str(destination), label_reason, time.time(), job_id))
         event(settings, 'Curated. Waiting for your explicit approval.', job_id)
+        update(settings,job_id,'Curated','Ready for your review; nothing published',len(rows),len(rows))
     except Exception as error:
         reason = str(error)[:2000]
         with connect(settings) as db:
             db.execute("UPDATE jobs SET status='Needs review',reason=?,path=?,updated=? WHERE id=?",
                        (reason, str(folder), time.time(), job_id))
         event(settings, reason, job_id, 'warning')
+        update(settings,job_id,'Needs review',reason)
 
 
 def tick(settings):

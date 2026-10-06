@@ -82,6 +82,25 @@ Do not purge unless you intend to discard everything in staging.
 
 ## Authentication and configuration
 
+### Manual curation and processing progress
+
+Choose Manual metadata when grouping, or inspect an unpublished release and select
+Manual metadata & artwork. Enter album artist/title/year and each track's title,
+artist, disc/track position, genres and category tags. Paste an image into the
+artwork box or choose an image file (10 MiB / 20 megapixel limit). Replacement
+covers are normalized and embedded in every output track; without a replacement,
+valid original covers are retained. Manual curation bypasses catalogue matching,
+scrubs working-copy tags, and prepares a new Curated revision. It does not certify
+album completeness or authorize publication. Unknown labels still block approval.
+
+Overview and the inspector show current processing stage, elapsed time and track
+counts where available. MusicBrainz/Beets matching uses an indeterminate progress
+bar rather than a guessed percentage. Active jobs refresh every two seconds.
+
+Before automatic matching, distributor website watermarks (including songs.pk,
+MP3Khan.com and djpunjab.com) are removed from title/album/artist fields in working
+copies only. Each change is logged. Originals and match thresholds are unchanged.
+
 Token authentication is enabled by default. The raw token is not stored in browser
 storage. Sign-in creates an HttpOnly SameSite cookie valid for 12 hours; hashed
 session identifiers persist in state across container restarts. Token rotation
