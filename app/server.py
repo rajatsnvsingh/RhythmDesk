@@ -20,6 +20,7 @@ from common import (Settings, atomic_json, clean_name, connect, event,
                     review_record, safe_child)
 from library import scan_library
 from worker import create_job, normalize_output
+from branding import asset, ASSET_PATHS
 
 STATIC = Path(__file__).parent / 'static'
 
@@ -453,6 +454,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.check_origin()
             url = urlparse(self.path)
+            brand = asset(url.path) if url.path in ASSET_PATHS else None
+            if brand is not None:
+                payload, content_type = brand
+                self.send_response(200)
+                self.headers_common()
+                self.send_header('Content-Type', content_type)
+                self.send_header('Content-Length', str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
             if url.path in ('/', '/app.js', '/style.css', '/settings.js', '/settings.css', '/review-tools.js', '/drawer.js', '/mobile.css', '/model.js'):
                 file = STATIC / ('index.html' if url.path == '/' else url.path[1:])
                 self.send_file(file)

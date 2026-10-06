@@ -12,6 +12,8 @@ const RhythmModel = (() => {
       album:detail.review?.tracks[0]?.album || detail.sources[0]?.suggested?.album || detail.job.album || '', year:detail.review?.tracks[0]?.year || detail.job.year || '', tracks, artwork:''};
   }
   const copy = value => JSON.parse(JSON.stringify(value));
+  const navCount = value => {const n=Number(value);return Number.isFinite(n)&&n>0?Math.floor(n):0;};
+  const navActive = (target, view) => target===view || (target==='more' && ['settings','activity'].includes(view));
   const dirty = (draft, baseline) => JSON.stringify(draft) !== JSON.stringify(baseline);
   function unknown(draft, policy) {
     return ['genres','tags'].flatMap(kind => {
@@ -29,6 +31,6 @@ const RhythmModel = (() => {
   function payload(draft, revision, manual=false) {
     return {...copy(draft),revision,tracks:draft.tracks.map(t=>manual?{...t,id:t.id}:{...t,file:t.file})};
   }
-  return {labels,draft,copy,dirty,unknown,replaceLabel,batch,payload};
+  return {labels,draft,copy,dirty,unknown,replaceLabel,batch,payload,navCount,navActive};
 })();
 if (typeof module !== 'undefined') module.exports = RhythmModel;

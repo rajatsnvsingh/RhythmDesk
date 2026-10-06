@@ -36,7 +36,9 @@ class DocumentationTests(unittest.TestCase):
 
     def test_screenshots_are_jpegs(self):
         screenshots = sorted((ROOT / "docs/assets/screenshots").glob("*.jpg"))
-        self.assertEqual(len(screenshots), 6)
+        required = {'overview.jpg', 'incoming.jpg', 'inspector.jpg', 'manual-curation.jpg',
+                    'mobile-review.jpg', 'music-drawer.jpg', 'mobile-more.jpg'}
+        self.assertTrue(required <= {screenshot.name for screenshot in screenshots})
         for screenshot in screenshots:
             with self.subTest(screenshot=screenshot.name):
                 data = screenshot.read_bytes()

@@ -30,7 +30,7 @@ function showLogin(){csrf='';$('desk').hidden=true;$('login').hidden=false;}
 async function signIn(result){csrf=result.csrf;$('login').hidden=true;$('desk').hidden=false;$('logout').hidden=result.auth_required===false;$('mobile-logout').hidden=result.auth_required===false;await refresh();}
 function view(name,historyMode='push'){
   if(name==='curated'){name='jobs';jobFilter='ready';}
-  const go=()=>{const changed=currentView!==name;currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('nav [data-view]').forEach(el=>{el.classList.toggle('active',el.dataset.view===name);el.setAttribute('aria-current',el.dataset.view===name?'page':'false');});$('page-title').textContent=({overview:'Home',incoming:'Incoming',jobs:'Review',library:'Rhythm Attic',activity:'Activity',settings:'Settings'})[name]||name;if(name==='settings')loadSettings();if(historyMode==='replace')history.replaceState(null,'','#'+name);else if(location.hash!=='#'+name)history.pushState(null,'','#'+name);if(changed)window.scrollTo(0,0);};
+  const go=()=>{const changed=currentView!==name;currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.sidebar nav [data-view]').forEach(el=>{const exact=el.dataset.view===name;el.classList.toggle('active',RhythmModel.navActive(el.dataset.view,name));el.setAttribute('aria-current',exact?'page':RhythmModel.navActive(el.dataset.view,name)?'true':'false');});$('page-title').textContent=({overview:'Home',incoming:'Incoming',jobs:'Review',library:'Rhythm Attic',activity:'Activity',settings:'Settings',more:'More'})[name]||name;if(name==='settings')loadSettings();if(historyMode==='replace')history.replaceState(null,'','#'+name);else if(location.hash!=='#'+name)history.pushState(null,'','#'+name);if(changed)window.scrollTo(0,0);};
   if($('review-dialog').open)guardDraft(()=>{$('review-dialog').close();go();});else go();
 }
 function reviewView(filter){jobFilter=filter;jobOffset=0;view('jobs');refresh();}
@@ -51,10 +51,11 @@ function reasonFor(job){if(job.status==='Approved')return 'Published explicitly 
 function releaseName(job){return job.album||'Untitled release';}
 function decisionRow(job){return `<div class="decision-row">${cover(job)}<div class="release-name"><strong>${esc(releaseName(job))}</strong><small>${esc(job.artist||'Unidentified artist')} · ${number(job.track_count)} tracks · ${esc(job.mode)}</small><span class="decision-reason">${esc(reasonFor(job))}</span></div>${badge(job.status)}<button class="secondary" data-job="${esc(job.id)}">${job.status==='Needs review'?'Resolve':'Review'}</button></div>`;}
 function queueRow(j){return `<tr><td class="queue-name">${cover(j)}<strong>${esc(releaseName(j))}</strong></td><td class="queue-credit">${esc(j.artist||'Unidentified artist')}<small>${j.year||'Year unknown'}</small></td><td class="queue-count">${j.track_count} tracks<small>${esc(j.mode)}</small></td><td class="queue-state">${badge(j.status)}<small>${esc(reasonFor(j))}</small></td><td class="queue-destination"><code>${esc(j.destination||'Not prepared')}</code></td><td class="queue-date">${esc(date(j.updated))}</td><td class="queue-action"><button class="secondary" data-job="${esc(j.id)}">Inspect</button></td></tr>`;}
+function navigationCount(id,value,label,description){const count=RhythmModel.navCount(value),el=$(id);el.hidden=!count;el.textContent=count?number(count):'';el.closest('button').setAttribute('aria-label',count?`${label}, ${number(count)} ${description}`:label);}
 function render(){
   const s=snapshot,c=s.review_counts,t=s.track_counts,j=s.job_counts,lib=s.library;
   $('demo-banner').hidden=!s.demo;
-  $('nav-incoming').textContent=number((t.Incoming||0)+(t.Unresolved||0));$('nav-jobs').textContent=number(c.attention+c.ready);
+  navigationCount('nav-incoming',(t.Incoming||0)+(t.Unresolved||0),'Incoming','tracks to organize');navigationCount('nav-jobs',c.attention+c.ready,'Review','releases awaiting your decision');
   const live=s.worker_heartbeat&&Date.now()/1000-s.worker_heartbeat<120;
   $('worker-status').textContent=s.demo?'Demo':s.runtime.paused?'Paused':live?'Worker active':'Worker not reporting';$('worker-status').className='status '+(live&&!s.runtime.paused?'live':'warning');
   $('publisher-status').textContent=s.approval_available?'Publisher available':s.demo?'Demo: no publication':'Publisher unavailable';
@@ -123,7 +124,7 @@ document.addEventListener('click',async e=>{
 document.addEventListener('change',e=>{if(e.target.dataset.track){e.target.checked?selected.add(e.target.dataset.track):selected.delete(e.target.dataset.track);selectionLabel();}});
 $('login-form').onsubmit=async e=>{e.preventDefault();try{await signIn(await api('/api/login',{token:$('login-token').value}));$('login-token').value='';}catch(err){$('login-error').textContent=err.message;}};
 async function logout(){guardDraft(async()=>{try{await api('/api/logout',{});document.querySelectorAll('dialog[open]').forEach(d=>d.close());showLogin();}catch(e){feedback(e.message);}});}
-$('logout').onclick=logout;$('mobile-logout').onclick=logout;$('more-nav').onclick=()=>$('more-dialog').showModal();$('refresh').onclick=()=>{storageAt=0;refresh();};
+$('logout').onclick=logout;$('mobile-logout').onclick=logout;$('refresh').onclick=()=>{storageAt=0;refresh();};
 for(const id of ['track-filter','track-sort'])$(id).onchange=()=>{offset=0;refresh();};
 function search(id,fn){let timer;$(id).oninput=()=>{clearTimeout(timer);timer=setTimeout(fn,250);};}
 search('track-search',()=>{offset=0;refresh();});search('job-search',()=>{jobOffset=0;refresh();});$('job-sort').onchange=()=>{jobOffset=0;refresh();};$('job-direction').onclick=()=>{jobDirection=-jobDirection;$('job-direction').textContent=jobDirection===1?'Ascending ↑':'Descending ↓';refresh();};

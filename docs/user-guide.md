@@ -10,6 +10,10 @@ Your library is the destination, not the workspace. Rhythm Desk copies music int
 
 Home shows your next actions and waiting decisions alongside operational counts and the current library. **Import music** and manual **Scan incoming** are available across the workspace. Review combines Needs attention, Ready, Processing and History. “Ready” means ready for human scrutiny, not guaranteed correct metadata. Unknown labels and destination conflicts keep a Curated release in Needs attention.
 
+Desktop navigation shows counts only when there is work waiting. On phones, these become small raised notification dots; exact counts remain in the workspace and accessible button labels. **More** is an ordinary page for Settings, Activity and Sign out—not a modal—and stays highlighted while you use those secondary pages. Your browser's Back button returns through them normally. The record/R icon also appears in browser tabs and phone home-screen bookmarks. Home-screen installation depends on your browser; it does not provide offline access.
+
+![Mobile More page and raised Review notification dot](assets/screenshots/mobile-more.jpg)
+
 Library statistics include albums, tracks, artists, storage, genres and category tags, with a snapshot timestamp. Published job history is separate from the current library inventory. Activity records imports, matching, corrections and publication.
 
 Processing progress appears here and inside Inspect. Preparing/manual tagging shows track counts. Matching and release resolution can wait on external services; their indicators are deliberately indeterminate. An elapsed timer is not an estimated time remaining.
