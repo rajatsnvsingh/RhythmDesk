@@ -139,6 +139,41 @@ This backs up and updates only the protected web-service source mount. Source
 permissions are unchanged. Re-deploy normally afterward to recreate containers.
 The deployment key cannot execute this administrator command.
 
+### Switch from the test library to a fresh Rhythm Attic
+
+In a pinned deployment, changing the project's `.env` alone may not change mounts:
+the administrator snapshot can contain fully rendered paths. Use the narrow
+administrator helper instead:
+
+```sh
+cd ~/apps/rhythm-curator
+sudo python3 app/configure_library.py \
+  --project /home/raj/apps/rhythm-curator \
+  --library /srv/media/music/rhythm-attic
+```
+
+This is a dry run. Add `--apply` to create the empty library, grant the UI read-only
+and publisher write permissions, and save the protected mount plan with a root-only
+backup. A new directory or an empty existing directory is required; existing music
+is refused rather than recursively changing its permissions. The library parent
+must already exist, and symlinks and overlaps with staging/state are refused.
+
+Then re-deploy through the usual restricted deploy command to recreate containers.
+Until recreation, the running app still points at the old library: do not approve
+releases during switch-over. Verify Settings' effective `LIBRARY_PATH` and refresh
+Library statistics afterward. The worker still has no library mount, the UI mount
+remains read-only, and publication still requires explicit revision-bound approval.
+
+Staging, state, the source drawer, LAN binding and authentication are preserved.
+Test albums are not migrated or deleted. Retained published-job history can show
+test approvals even though a new production library starts with zero albums.
+Neither this helper nor a deployment retries those approvals automatically.
+
+The helper changes the authoritative protected Compose snapshot, not either `.env`
+file. Before deliberately re-running the deployment-access installer, update the
+project's `LIBRARY_PATH` to the same new path and preserve its other mount/network
+customizations; the installer replaces protected snapshots from project files.
+
 Revoke new SSH connections without stopping the app:
 sudo mv /var/lib/rhythm-deploy-user/.ssh/authorized_keys /var/lib/rhythm-deploy-user/.ssh/authorized_keys.disabled
 Remove /etc/sudoers.d/rhythm-deploy when retiring the account. Revocation does not
