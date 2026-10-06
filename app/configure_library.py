@@ -92,6 +92,33 @@ def no_symlinks(path):
             raise ValueError('Directory and its ancestors must not be symlinks: ' + str(path))
 
 
+def project_directory(path):
+    """Older pinned installs do not persist the optional project-path metadata.
+
+In that case only the explicit administrator argument is used. This neither
+creates metadata nor changes the installed forced-command helper's project.
+"""
+    no_symlinks(path)
+    project = path.resolve(strict=True)
+    if not project.is_dir():
+        raise ValueError('Project must be an existing application directory')
+    metadata = CONTROL / 'project-path'
+    if metadata.is_symlink():
+        raise ValueError('Protected project metadata must not be a symlink')
+    if metadata.exists():
+        pinned = Path(metadata.read_text().strip())
+        if not pinned.is_absolute() or project != pinned.resolve(strict=True):
+            raise ValueError('Project differs from the pinned deployment')
+    else:
+        app = project / 'app'
+        no_symlinks(app)
+        for name in ('server.py', 'worker.py', 'publisher.py'):
+            source = app / name
+            if source.is_symlink() or not source.is_file():
+                raise ValueError('Without project-path metadata, --project must contain the Rhythm Desk application')
+    return project
+
+
 def fresh_library(path):
     """Existing music requires a separate permission review, never recursive ACL changes."""
     no_symlinks(path)
@@ -189,14 +216,11 @@ def main():
     if os.geteuid() != 0:
         parser.error('Run as administrator; the SSH deployment key cannot change mounts')
     os.umask(0o077)
-    no_symlinks(args.project)
-    project = args.project.resolve(strict=True)
-    if project != Path((CONTROL / 'project-path').read_text().strip()).resolve(strict=True):
-        parser.error('Project differs from the pinned deployment')
     no_symlinks(CONTROL)
     for filename in ('compose.yaml', '.env', 'project-path'):
         if (CONTROL / filename).is_symlink():
             parser.error('Protected deployment files must not be symlinks')
+    project = project_directory(args.project)
     library = Path(str(host_path(str(args.library))))
     no_symlinks(library)
     import fcntl

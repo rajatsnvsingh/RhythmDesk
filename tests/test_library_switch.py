@@ -37,6 +37,51 @@ def configuration():
 
 
 class LibrarySwitchTests(unittest.TestCase):
+    def test_explicit_administrator_project_works_without_optional_metadata(self):
+        with tempfile.TemporaryDirectory() as folder:
+            control = Path(folder) / 'control'
+            project = Path(folder) / 'project'
+            control.mkdir()
+            (project / 'app').mkdir(parents=True)
+            for name in ('server.py', 'worker.py', 'publisher.py'):
+                (project / 'app' / name).write_text('# fixture\n')
+            with patch.object(switch, 'CONTROL', control):
+                self.assertEqual(switch.project_directory(project), project.resolve())
+            self.assertFalse((control / 'project-path').exists())
+
+    def test_existing_project_metadata_still_requires_an_exact_match(self):
+        with tempfile.TemporaryDirectory() as folder:
+            control = Path(folder)
+            project = control / 'project'
+            other = control / 'other'
+            project.mkdir()
+            other.mkdir()
+            (control / 'project-path').write_text(str(project))
+            with patch.object(switch, 'CONTROL', control):
+                self.assertEqual(switch.project_directory(project), project.resolve())
+                with self.assertRaises(ValueError):
+                    switch.project_directory(other)
+
+    def test_missing_metadata_does_not_accept_unrelated_or_incomplete_directories(self):
+        with tempfile.TemporaryDirectory() as folder:
+            project = Path(folder) / 'project'
+            (project / 'app').mkdir(parents=True)
+            with patch.object(switch, 'CONTROL', Path(folder)):
+                with self.assertRaises(ValueError):
+                    switch.project_directory(project)
+                (project / 'app' / 'server.py').write_text('# fixture\n')
+                with self.assertRaises(ValueError):
+                    switch.project_directory(project)
+
+    def test_symlinked_project_metadata_is_not_treated_as_missing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            project = Path(folder)
+            metadata = project / 'project-path'
+            with patch.object(switch, 'CONTROL', project), \
+                    patch.object(Path, 'is_symlink', lambda p: p == metadata):
+                with self.assertRaises(ValueError):
+                    switch.project_directory(project)
+
     def test_only_library_mounts_and_display_mapping_change(self):
         before = configuration()
         original = copy.deepcopy(before)
@@ -170,9 +215,19 @@ class LibrarySwitchTests(unittest.TestCase):
         self.assertNotEqual(switch.canonical_plan(rendered), switch.canonical_plan(expected))
 
     def test_main_dry_run_never_creates_library_or_installs_plan(self):
+        for has_metadata in (True, False):
+            with self.subTest(has_metadata=has_metadata):
+                self.check_dry_run(has_metadata)
+
+    def check_dry_run(self, has_metadata):
         with tempfile.TemporaryDirectory() as folder:
             control = Path(folder)
-            (control / 'project-path').write_text(folder)
+            if has_metadata:
+                (control / 'project-path').write_text(folder)
+            else:
+                (control / 'app').mkdir()
+                for name in ('server.py', 'worker.py', 'publisher.py'):
+                    (control / 'app' / name).write_text('# fixture\n')
             fcntl = types.SimpleNamespace(flock=lambda *args: None, LOCK_EX=1, LOCK_NB=2)
             plan = switch.library_plan(configuration(), '/srv/media/music/rhythm-attic')
             with patch.object(switch, 'CONTROL', control), patch.object(switch, 'WORK', control), \

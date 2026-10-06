@@ -158,6 +158,11 @@ backup. A new directory or an empty existing directory is required; existing mus
 is refused rather than recursively changing its permissions. The library parent
 must already exist, and symlinks and overlaps with staging/state are refused.
 
+Older restricted installations may not have `/etc/rhythm-deploy/project-path`.
+The helper accepts the explicit administrator `--project` argument in that case,
+after checking that the app sources exist there. It does not create the missing
+file or modify SSH access. If the metadata file exists, its project must match.
+
 Then re-deploy through the usual restricted deploy command to recreate containers.
 Until recreation, the running app still points at the old library: do not approve
 releases during switch-over. Verify Settings' effective `LIBRARY_PATH` and refresh
