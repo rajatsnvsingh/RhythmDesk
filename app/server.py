@@ -71,7 +71,8 @@ class Desk:
         threading.Thread(target=run, daemon=True).start()
         return True
 
-    def snapshot(self, offset=0, limit=200, query='', status=''):
+    def snapshot(self, offset=0, limit=200, query='', status='', job_query='', job_filter='',
+                 job_offset=0, job_limit=50, job_sort='updated', job_direction=-1, track_sort='updated'):
         with connect(self.settings) as db:
             counts = {row['status']: row['n'] for row in db.execute('SELECT status,count(*) n FROM tracks GROUP BY status')}
             job_counts = {row['status']: row['n'] for row in db.execute('SELECT status,count(*) n FROM jobs GROUP BY status')}
@@ -79,16 +80,22 @@ class Desk:
             if query:
                 clauses.append('(path LIKE ? OR artist LIKE ? OR album LIKE ? OR title LIKE ?)')
                 values.extend(['%' + query + '%'] * 4)
-            if status:
+            if status == 'actionable':
+                clauses.append("status IN ('Incoming','Unresolved')")
+            elif status:
                 clauses.append('status=?')
                 values.append(status)
             where = ' AND '.join(clauses)
             total = db.execute(f'SELECT count(*) n FROM tracks WHERE {where}', values).fetchone()['n']
-            tracks = [dict(row) for row in db.execute(f'SELECT * FROM tracks WHERE {where} ORDER BY updated DESC LIMIT ? OFFSET ?', [*values, limit, offset])]
-            jobs = [dict(row) for row in db.execute('SELECT * FROM jobs ORDER BY updated DESC LIMIT 1000')]
+            track_order = {'title': 'title COLLATE NOCASE,path', 'artist': 'artist COLLATE NOCASE,title',
+                           'album': 'album COLLATE NOCASE,disc,track', 'updated': 'updated DESC'}.get(track_sort, 'updated DESC')
+            tracks = [dict(row) for row in db.execute(f'SELECT * FROM tracks WHERE {where} ORDER BY {track_order} LIMIT ? OFFSET ?', [*values, limit, offset])]
+            jobs = [dict(row) for row in db.execute('SELECT * FROM jobs ORDER BY updated DESC')]
             events = [dict(row) for row in db.execute('SELECT * FROM events ORDER BY id DESC LIMIT 100')]
             meta = {row['key']: row['value'] for row in db.execute("SELECT * FROM meta WHERE key IN ('worker_heartbeat','last_scan','library_stats') OR key LIKE 'progress:%'")}
         reconciled = False
+        publisher = not self.demo and Path(self.settings.socket).exists()
+        from ux import readiness, recovery, release_identity, queue_page
         for job in jobs:
             job['progress']=json.loads(meta.get('progress:'+job['id'],'null'))
             if job['status'] in ('Curated', 'Publishing'):
@@ -103,16 +110,24 @@ class Desk:
             job['destination_exists'] = bool(job['destination'] and target.exists())
             review_path = self.job_folder(job) / 'REVIEW.json'
             job['cover_url'] = None
+            record, found = None, {}
             if review_path.exists():
                 from taxonomy import unknown
                 from urllib.parse import urlencode
-                record = json.loads(review_path.read_text(encoding='utf-8'))
+                try:
+                    record = json.loads(review_path.read_text(encoding='utf-8'))
+                except (OSError, json.JSONDecodeError):
+                    record = None
+            if record:
                 found = unknown(self.settings, record['tracks'])
                 if job['status'] == 'Curated':
                     job['reason'] = 'Unapproved genres/tags: ' + json.dumps(found) if any(found.values()) else ''
                 cover = next((t for t in record['tracks'] if t.get('artwork')), None)
                 if cover:
                     job['cover_url'] = '/api/media?' + urlencode(dict(job=job['id'],file=cover['file'],art=1))
+            job['readiness'] = readiness(job, record, found, job['destination_exists'], publisher, self.demo)
+            job['recovery'] = recovery(job)
+            job['identity'] = release_identity(job, record)
         if reconciled:
             with connect(self.settings) as db:
                 counts = {row['status']: row['n'] for row in db.execute('SELECT status,count(*) n FROM tracks GROUP BY status')}
@@ -122,13 +137,20 @@ class Desk:
                 if track['job_id'] in approved_ids:
                     track['status'] = 'Approved'
         from intake import detect
-        return {'intake': detect(self.settings), 'tracks': tracks, 'track_counts': counts, 'jobs': jobs, 'job_counts': job_counts,
+        page, job_total, review_counts = queue_page(jobs, job_query, job_filter, job_offset, job_limit, job_sort, job_direction)
+        decisions = [j for j in jobs if j['status'] in ('Curated', 'Needs review')][:6]
+        active = [j for j in jobs if j['status'] in ('Queued', 'Processing', 'Editing', 'Publishing')][:8]
+        from configuration import runtime
+        from taxonomy import policy
+        return {'intake': detect(self.settings), 'tracks': tracks, 'track_counts': counts, 'jobs': page, 'job_counts': job_counts,
+                'decisions': decisions, 'active_jobs': active, 'review_counts': review_counts, 'job_total': job_total,
+                'job_offset': job_offset, 'job_limit': job_limit, 'runtime': runtime(self.settings), 'taxonomy': policy(self.settings),
                 'events': events, 'track_total': total, 'offset': offset, 'limit': limit,
                 'worker_heartbeat': float(meta.get('worker_heartbeat', 0)),
                 'last_scan': float(meta.get('last_scan', 0)),
                 'library': json.loads(meta.get('library_stats', '{}')),
                 'stats_refreshing': self.stats_lock.locked(), 'demo': self.demo,
-                'approval_available': not self.demo and Path(self.settings.socket).exists()}
+                'approval_available': publisher}
 
     def job_folder(self, job):
         for root in (self.settings.curated, self.settings.review, self.settings.archive):
@@ -178,9 +200,13 @@ class Desk:
             job['reason'] = 'Unapproved genres/tags: ' + json.dumps(found) if any(found.values()) else ''
         from processing import read
         job['progress']=read(self.settings,job_id)
+        from ux import readiness, recovery, release_identity
+        found = unknown(self.settings, review['tracks']) if review else {}
+        exists = bool(job['destination'] and (self.settings.library / job['destination']).exists())
         return {'job': job, 'review': review, 'sources': sources, 'log': log_text,
-                'unknown_labels': unknown(self.settings, review['tracks']) if review else {},
-                'destination_exists': bool(job['destination'] and (self.settings.library / job['destination']).exists())}
+                'unknown_labels': found, 'taxonomy': __import__('taxonomy').policy(self.settings),
+                'readiness': readiness(job, review, found, exists, not self.demo and Path(self.settings.socket).exists(), self.demo),
+                'recovery': recovery(job), 'identity': release_identity(job, review), 'destination_exists': exists}
 
     def retry(self, job_id, release_id, force_artwork=False, mode=None):
         import uuid
@@ -219,6 +245,8 @@ class Desk:
 
     def edit(self, job_id, data):
         from mediafile import MediaFile
+        from manual import cover
+        replacement = cover(data.get('artwork'))
         with connect(self.settings) as db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
@@ -245,6 +273,9 @@ class Desk:
                 if edit.get('file') != original['file']:
                     raise ValueError('Track order changed; reload first')
                 media = MediaFile(safe_child(audio, original['file']))
+                if replacement:
+                    from mediafile import Image, ImageType
+                    media.images = [Image(replacement, type=ImageType.front)]
                 media.albumartist, media.album, media.year = artist, album, year
                 media.artist = str(edit['artist']).strip()
                 media.title = str(edit['title']).strip()
@@ -413,7 +444,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.headers.get('Content-Type', '').startswith('application/json'):
             raise ValueError('JSON body required')
         length = int(self.headers.get('Content-Length', '0'))
-        limit=16*1024**2 if self.path.startswith('/api/jobs/') and self.path.endswith('/manual') else 512000
+        limit=16*1024**2 if self.path.startswith('/api/jobs/') and self.path.endswith(('/manual', '/edit')) else 512000
         if not 0 < length <= limit:
             raise ValueError('Request too large or empty')
         return json.loads(self.rfile.read(length))
@@ -422,7 +453,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.check_origin()
             url = urlparse(self.path)
-            if url.path in ('/', '/app.js', '/style.css', '/settings.js', '/settings.css', '/taxonomy.js', '/review-tools.js', '/modes.js', '/drawer.js', '/mobile.css', '/manual.js'):
+            if url.path in ('/', '/app.js', '/style.css', '/settings.js', '/settings.css', '/review-tools.js', '/drawer.js', '/mobile.css', '/model.js'):
                 file = STATIC / ('index.html' if url.path == '/' else url.path[1:])
                 self.send_file(file)
                 return
@@ -465,7 +496,12 @@ class Handler(BaseHTTPRequestHandler):
                 params = parse_qs(url.query)
                 self.json(self.desk.snapshot(max(0, int(params.get('offset', ['0'])[0])),
                                              min(500, max(1, int(params.get('limit', ['200'])[0]))),
-                                             params.get('q', [''])[0], params.get('status', [''])[0]))
+                                             params.get('q', [''])[0], params.get('status', [''])[0],
+                                             params.get('job_q', [''])[0], params.get('job_filter', [''])[0],
+                                             max(0, int(params.get('job_offset', ['0'])[0])),
+                                             min(200, max(1, int(params.get('job_limit', ['50'])[0]))),
+                                             params.get('job_sort', ['updated'])[0], int(params.get('job_direction', ['-1'])[0]),
+                                             params.get('track_sort', ['updated'])[0]))
             elif url.path.startswith('/api/jobs/'):
                 self.json(self.desk.detail(unquote(url.path[len('/api/jobs/'):])) )
             elif url.path == '/api/source':

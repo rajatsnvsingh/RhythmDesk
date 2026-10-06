@@ -109,8 +109,11 @@ def create_job(settings, track_ids, artist='', album='', year=0, release_id='', 
             raise ValueError('Only readable, unassigned tracks of at least 10 seconds can be grouped')
         artist = artist.strip() or rows[0]['albumartist']
         album = album.strip() or rows[0]['album']
-        clean_name(artist)
-        clean_name(album)
+        # A manual grouping only assigns originals to an editor. It does not
+        # write metadata; the manual submission still requires real values.
+        if mode != 'manual':
+            clean_name(artist)
+            clean_name(album)
         if not 0 <= int(year or 0) <= 9999:
             raise ValueError('Invalid year')
         now = time.time()
@@ -121,7 +124,7 @@ def create_job(settings, track_ids, artist='', album='', year=0, release_id='', 
         db.execute('UPDATE jobs SET mode=? WHERE id=?',(mode,job_id))
         if mode=='manual':
             db.execute("UPDATE jobs SET status='Needs review',reason='Enter manual metadata to prepare this release' WHERE id=?",(job_id,))
-    event(settings, f'Queued {artist} / {album}: {len(rows)} tracks', job_id)
+    event(settings, f'Grouped {artist or "Unidentified artist"} / {album or "Untitled release"}: {len(rows)} tracks', job_id)
     return job_id
 
 

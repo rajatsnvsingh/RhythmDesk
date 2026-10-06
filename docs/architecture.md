@@ -35,6 +35,26 @@ flowchart TB
 
 Containers are non-root, drop capabilities, use read-only root filesystems and `/tmp` tmpfs. Linux ACLs and bind mounts provide different layers: read-only Docker mounts do not grant host permission, and writable app mounts do not confer general server access.
 
+## Browser editing and readiness
+
+The client uses one explicit editor rather than stacked inspector wrappers. `model.js` owns pure draft/label/batch operations; `review-tools.js` owns the inspector lifecycle; `app.js` owns navigation and snapshots. Import and Settings have their own cohesive modules. Helper forms and global allow-list changes are separate from the audio draft.
+
+```mermaid
+flowchart LR
+    R["Server detail + exact revision"] --> B["Baseline draft"]
+    B --> D["Local metadata / label / artwork draft"]
+    D -->|"Explicit Save"| E["Working-copy validation + new revision"]
+    E --> R
+    D -->|"Unsaved / stale"| X["Block approval; preserve draft"]
+    R --> V["Read-only readiness + provenance"]
+    V --> U["Human inspection + confirmation"]
+    U -->|"Exact revision request"| P["Server + isolated publisher checks"]
+```
+
+`ux.py` computes global queue groups, recovery explanations and presentation readiness. It does not grant publication authority. Queue counts are aggregated before filtering/pagination. A job's edition links use validated UUIDs; absence of structured match evidence is not replaced with guessed success counts.
+
+Dirty close/navigation is guarded. Polling changes progress/policy without rebuilding metadata inputs. If a server revision changes during a dirty draft, the client preserves it and blocks further saving/approval until reload. Drafts are deliberately not persisted across browser sessions.
+
 ## Lifecycle
 
 ```mermaid

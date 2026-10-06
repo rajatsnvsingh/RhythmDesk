@@ -1,77 +1,152 @@
+/* One inspector, one explicit draft, one revision-producing save operation. */
 'use strict';
-const uploadPanel=document.createElement('section');uploadPanel.className='panel settings-panel';
-uploadPanel.innerHTML='<div class="panel-heading"><h2>Drop music into staging</h2></div><p>Drop files or folders here, or choose them below. Uploads copy your files; originals on your computer stay untouched. Nothing is scanned or published automatically.</p><div class="header-tools"><label class="secondary">Choose files<input id="upload-files" type="file" multiple></label><label class="secondary">Choose folder<input id="upload-folder" type="file" webkitdirectory multiple></label></div><progress id="upload-progress" max="100" value="0" hidden></progress><p id="upload-status" role="status">Ready · maximum 2 GiB per file, 50 GiB per batch.</p>';
-$('incoming').querySelector('.section-heading').after(uploadPanel);
-let uploadBusy=false;
-async function uploadBatch(items){
-  if(uploadBusy){toast('An upload is already running');return;}
-  if(!items.length)return;
-  uploadBusy=true;uploadPanel.querySelectorAll('input').forEach(n=>n.disabled=true);
-  const batch=crypto.randomUUID?crypto.randomUUID().replaceAll('-',''):Array.from(crypto.getRandomValues(new Uint8Array(16)),x=>x.toString(16).padStart(2,'0')).join('');
-  const total=items.reduce((n,x)=>n+x.file.size,0);let done=0;
-  const progress=$('upload-progress'),status=$('upload-status');progress.hidden=false;
-  try{
-    if(items.length>10000||total>50*1024**3||items.some(x=>!x.file.size||x.file.size>2*1024**3))throw new Error('Batch exceeds upload limits or contains an empty file.');
-    for(let i=0;i<items.length;i++){
-      const item=items[i];status.textContent=`Uploading ${i+1}/${items.length}: ${item.path}`;
-      await new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('POST','/api/uploads/file?'+new URLSearchParams({batch,path:item.path}));xhr.setRequestHeader('X-CSRF-Token',csrf);xhr.setRequestHeader('Content-Type','application/octet-stream');xhr.timeout=30*60*1000;
-        xhr.upload.onprogress=e=>{progress.value=total?100*(done+e.loaded)/total:0;};
-        xhr.onload=()=>{if(xhr.status>=200&&xhr.status<300)resolve();else{let message='Upload failed ('+xhr.status+')';try{message=JSON.parse(xhr.responseText).error||message;}catch{}reject(new Error(message));}};
-        xhr.onerror=()=>reject(new Error('Connection interrupted'));xhr.ontimeout=()=>reject(new Error('Upload timed out'));xhr.send(item.file);
-      });done+=item.file.size;
-    }
-    const result=await api('/api/uploads/complete',{batch,count:items.length});progress.value=100;status.textContent=`${result.files} files · ${bytes(total)} copied to Incoming/${result.folder}. Click Scan when ready.`;await refresh();
-  }catch(e){status.textContent=`${e.message} Completed uploads remain in temporary staging, not Incoming. Re-select the batch to retry; staging purge also removes abandoned uploads.`;}
-  finally{uploadBusy=false;uploadPanel.querySelectorAll('input').forEach(n=>{n.disabled=false;n.value='';});}
+let editor=null, inspectSequence=0, discardAction=null, approvalRevision=null, lastPublished=null;
+function draftDirty(){return !!editor&&RhythmModel.dirty(editor.draft,editor.baseline);}
+function guardDraft(action){
+  if(editor?.busy){feedback('An operation is in progress. Wait for it to finish.','error',$('review-dialog'));return;}
+  if(!draftDirty()){action();return;}
+  discardAction=action;if(!$('discard-dialog').open)$('discard-dialog').showModal();
 }
-for(const id of ['upload-files','upload-folder'])$(id).onchange=e=>uploadBatch(Array.from(e.target.files,file=>({file,path:file.webkitRelativePath||file.name})));
-async function droppedEntry(entry,prefix=''){
-  if(entry.isFile)return new Promise((resolve,reject)=>entry.file(file=>resolve([{file,path:prefix+entry.name}]),reject));
-  const reader=entry.createReader();let entries=[],chunk;
-  do{chunk=await new Promise((resolve,reject)=>reader.readEntries(resolve,reject));entries.push(...chunk);}while(chunk.length);
-  const result=[];for(const child of entries)result.push(...await droppedEntry(child,prefix+entry.name+'/'));return result;
-}
-uploadPanel.ondragover=e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';};
-uploadPanel.ondrop=async e=>{e.preventDefault();if(uploadBusy)return;const entries=Array.from(e.dataTransfer.items||[],x=>x.webkitGetAsEntry?.()).filter(Boolean);const files=Array.from(e.dataTransfer.files);try{const items=[];if(entries.length){for(const entry of entries)items.push(...await droppedEntry(entry));}else items.push(...files.map(file=>({file,path:file.name})));await uploadBatch(items);}catch(err){$('upload-status').textContent=err.message;}};
-const scanButton=document.createElement('button');scanButton.className='primary';scanButton.textContent='Scan & prepare incoming';$('incoming').querySelector('.section-heading').append(scanButton);scanButton.onclick=async()=>{try{await api('/api/intake/scan',{});toast('Scan requested. You control when incoming is ready.');}catch(e){toast(e.message);}};
-const stagingPanel=document.createElement('section');stagingPanel.className='panel settings-panel';stagingPanel.innerHTML='<div class="panel-heading"><h2>Staging storage</h2><button id="refresh-staging" class="secondary">Refresh count</button></div><p id="staging-count" class="muted">Not yet counted</p><p class="muted">Counts all staging files: Incoming, Curated, needs-review, artwork and working copies. Purge permanently deletes all of them, including unresolved music. Library and state/processed archives are untouched. Stop the worker container first.</p><button id="purge-staging" class="secondary">Purge everything in staging…</button>';$('settings').append(stagingPanel);
-const purgeDialog=document.createElement('dialog');purgeDialog.id='purge-dialog';purgeDialog.innerHTML='<h2>Permanently purge staging?</h2><p>This deletes all incoming originals and unpublished working copies. There is no undo. Published music and state archives are not deleted.</p><p>The worker pauses automatically during purge.</p><form id="purge-form"><label class="check-label"><input name="confirmation" type="checkbox" required> I understand all staging files will be permanently deleted.</label><div class="dialog-actions"><button type="button" id="cancel-purge" class="secondary">Cancel</button><button class="primary" disabled>Permanently delete staging</button></div></form>';document.body.append(purgeDialog);
-async function stagingCount(){try{const s=await api('/api/staging');$('staging-count').textContent=`${number(s.files)} files · ${bytes(s.bytes)} · ${s.path}`;}catch(e){toast(e.message);}}
-settingsNav.addEventListener('click',stagingCount);$('refresh-staging').onclick=stagingCount;$('purge-staging').onclick=()=>{$('purge-form').reset();purgeDialog.showModal();};$('cancel-purge').onclick=()=>purgeDialog.close();
-$('purge-form').elements.confirmation.onchange=e=>{$('purge-form').querySelector('button.primary').disabled=!e.target.checked;};
-$('purge-staging').onclick=()=>{$('purge-form').reset();$('purge-form').querySelector('button.primary').disabled=true;purgeDialog.showModal();};
-$('purge-form').onsubmit=async e=>{e.preventDefault();const button=e.target.querySelector('button.primary');button.disabled=true;try{const s=await api('/api/staging/purge',{confirmation:e.target.elements.confirmation.checked});purgeDialog.close();selected.clear();toast(`Permanently removed ${number(s.files)} staging files. Library and state archives retained.`);await stagingCount();await refresh();}catch(err){toast(err.message);}finally{button.disabled=!e.target.elements.confirmation.checked;}};
-const inspector=$('review-dialog');
+$('keep-editing').onclick=()=>{discardAction=null;$('discard-dialog').close();};
+$('discard-edits').onclick=()=>{if(editor)editor.draft=RhythmModel.copy(editor.baseline);const action=discardAction;discardAction=null;$('discard-dialog').close();action?.();};
+$('discard-dialog').addEventListener('cancel',()=>{discardAction=null;});
 let backdropDown=false;
-function outsideInspector(e){const r=inspector.getBoundingClientRect();return e.target===inspector&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom);}
-inspector.addEventListener('pointerdown',e=>{backdropDown=outsideInspector(e);});
-inspector.addEventListener('click',e=>{if(backdropDown&&outsideInspector(e))inspector.close();backdropDown=false;});
-// Media elements stay attached to one parent for their entire lifetime.
-const inspectorPlayer=$('player').cloneNode(true);
-inspectorPlayer.id='modal-player';
-inspectorPlayer.querySelectorAll('[id]').forEach(node=>node.id='modal-'+node.id);
-inspector.append(inspectorPlayer);
-$('modal-close-player').onclick=()=>{const audio=$('modal-audio');audio.pause();audio.removeAttribute('src');audio.load();inspectorPlayer.hidden=true;};
-inspector.addEventListener('close',()=>{$('modal-audio').pause();inspectorPlayer.hidden=true;});
-const labelsInspector=inspect;
-const obsoleteSettling=$('runtime-form').elements.stable_seconds?.closest('label');if(obsoleteSettling)obsoleteSettling.hidden=true;
-const overviewScan=document.createElement('button');overviewScan.className='primary';overviewScan.textContent='Checking incoming…';overviewScan.disabled=true;$('overview').querySelector('.section-heading').append(overviewScan);overviewScan.onclick=()=>scanButton.click();
-const detectionRender=render;
-render=function(){detectionRender();const s=snapshot.intake||{};const text=s.scan_pending?'Scan queued':s.changed_files?(s.ready?`Scan & prepare · ${number(s.changed_files)} new/changed files`:`${number(s.changed_files)} changes · settling ${s.settling_seconds}s`):'No new files to scan';for(const button of [scanButton,overviewScan]){button.textContent=text;button.disabled=!s.ready||s.scan_pending;}};
-stagingPanel.querySelectorAll('p')[1].textContent='Counts all staging files: Incoming, Curated, needs-review, artwork and working copies. Purge permanently deletes all of them, including unresolved music. Library and state archives are untouched. The worker pauses automatically and waits for its current job to finish. Stop SMB uploads and avoid editing or approving releases during purge.';
-purgeDialog.querySelectorAll('p')[1].textContent='The worker pauses automatically. If a release is processing, purge waits for it to finish, then clears staging and resumes the worker. Your existing pause setting is preserved.';
-$('purge-form').addEventListener('submit',()=>toast('Waiting for current worker activity, then purging staging. Keep this page open.'),true);
-inspect=async function(jobId){await labelsInspector(jobId);if(detail?.job.id!==jobId||!detail.review)return;
- const editor=[...document.querySelectorAll('#review-body section')].find(el=>el.querySelector('h3')?.textContent==='Genres & category tags');
- let disclosure=null;
- if(editor){disclosure=document.createElement('details');disclosure.className='label-disclosure';disclosure.open=Object.values(detail.unknown_labels||{}).some(values=>values.length);const summary=document.createElement('summary');summary.className='review-subheading';summary.textContent='Genres & category tags'+(disclosure.open?' · Unapproved values':'');editor.before(disclosure);disclosure.append(summary,editor);editor.querySelector('h3').remove();}
- if(detail.job.status!=='Curated')return;
- const box=document.createElement('section');box.className='settings-panel';box.innerHTML='<h3>Allow or create a label</h3><p class="muted">Allowing adds a value to the global list. It does not publish this release. Creating allows a new label; enter it in the track fields above and save corrections to apply it.</p>';
- for(const [kind,values] of Object.entries(detail.unknown_labels||{}))for(const value of values){const button=document.createElement('button');button.className='secondary';button.textContent=`Allow ${kind==='genres'?'genre':'tag'}: ${value}`;button.onclick=()=>allowFromReview(kind,value,jobId,button);box.append(button);}
- const form=document.createElement('form');form.className='settings-actions';form.innerHTML='<select name="kind" aria-label="New label type"><option value="genres">Genre</option><option value="tags">Category tag</option></select><input name="value" aria-label="New allowed label" placeholder="New label" maxlength="100" required><button class="secondary">Create & allow</button>';
- form.onsubmit=e=>{e.preventDefault();allowFromReview(form.elements.kind.value,form.elements.value.value,jobId,form.querySelector('button'));};box.append(form);(disclosure||$('review-body')).append(box);
-};
-async function allowFromReview(kind,value,jobId,button){const dirty=[...document.querySelectorAll('#review-body input')].some(el=>el.value!==el.defaultValue);if(dirty){toast('Save your current corrections before changing the allow list.');return;}button.disabled=true;try{await api('/api/taxonomy/allow',{kind,value});toast('Label allowed. Publication still requires your approval.');await inspect(jobId);await refresh();}catch(e){button.disabled=false;toast(e.message);}}
-const coversRender=render;
-render=function(){coversRender();for(const row of document.querySelectorAll('#decision-list .decision-row')){const id=row.querySelector('[data-job]')?.dataset.job;const job=snapshot.jobs.find(j=>j.id===id);const square=row.querySelector('.album-square');if(job?.cover_url&&square)square.outerHTML=`<img class="queue-cover" src="${esc(job.cover_url)}" alt="${esc(job.album)} cover" loading="lazy">`;}
-for(const table of ['jobs-table','curated-table'])for(const row of $(table).querySelectorAll('tbody tr')){const id=row.querySelector('[data-job]')?.dataset.job;const job=snapshot.jobs.find(j=>j.id===id);if(job?.cover_url)row.cells[0].insertAdjacentHTML('afterbegin',`<img class="queue-cover" src="${esc(job.cover_url)}" alt="${esc(job.album)} cover" loading="lazy">`);}};
+const inspector=$('review-dialog');
+function outside(e){const r=inspector.getBoundingClientRect();return e.target===inspector&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom);}
+inspector.addEventListener('pointerdown',e=>{backdropDown=outside(e);});inspector.addEventListener('click',e=>{if(backdropDown&&outside(e))guardDraft(()=>inspector.close());backdropDown=false;});
+inspector.addEventListener('cancel',e=>{e.preventDefault();guardDraft(()=>inspector.close());});
+inspector.addEventListener('close',()=>{closePlayer('modal-');editor=null;detail=null;});
+async function inspect(id,force=false){
+  if(editor&&editor.id!==id&&!force){guardDraft(()=>inspect(id,true));return;}
+  if(editor&&editor.id===id&&draftDirty()&&!force)return;
+  const seq=++inspectSequence;
+  try{
+    const d=await api('/api/jobs/'+encodeURIComponent(id));if(seq!==inspectSequence)return;
+    const scroll=editor?.id===id?$('review-body').scrollTop:0,old=editor;
+    detail=d;const manual=!d.review&&d.job.mode==='manual';
+    editor={id,draft:RhythmModel.draft(d,manual),baseline:null,manual,editing:manual,rows:new Set(),selected:new Set(),busy:false,stale:false};
+    editor.baseline=RhythmModel.copy(editor.draft);
+    if(old?.id===id){editor.editing=old.editing;editor.rows=old.rows;editor.selected=old.selected;}
+    renderInspector();$('review-body').scrollTop=scroll;if(!inspector.open)inspector.showModal();
+  }catch(e){feedback(e.message);}
+}
+async function pollInspector(){
+  if(!inspector.open||!editor||editor.busy)return;
+  const id=editor.id,d=await api('/api/jobs/'+encodeURIComponent(id));if(editor?.id!==id||editor.busy)return;
+  const changed=d.job.status!==detail.job.status||d.job.revision!==detail.job.revision;
+  if(changed&&draftDirty()){
+    editor.stale=true;feedback('The server version changed. Your draft is preserved. Copy any edits you need, then discard/reload before saving or approving.','error',inspector);updateEditorState();
+  }else if(changed){await inspect(id,true);}
+  else{const changedPolicy=JSON.stringify(detail.taxonomy)!==JSON.stringify(d.taxonomy);detail.readiness=d.readiness;detail.taxonomy=d.taxonomy;detail.unknown_labels=d.unknown_labels;detail.job.progress=d.job.progress;detail.destination_exists=d.destination_exists;
+    if($('inspector-progress'))$('inspector-progress').innerHTML=processingMarkup(d.job);if(changedPolicy)renderUnknown();updateEditorState();}
+}
+function field(key,value,label,type='text',i=null){return `<span class="field-value">${esc(value||'—')}</span><input class="edit-field" ${i===null?`data-album="${key}"`:`data-field="${key}" data-index="${i}"`} aria-label="${esc(label)}" type="${type}" value="${esc(value)}" ${['disc','track'].includes(key)?'min="1"':''} ${key==='year'?'min="1000" max="9999"':''} ${['artist','title','album','year','disc','track'].includes(key)?'required':''} ${editable()?'':'disabled'}>`;}
+function editable(){return (detail.job.status==='Curated'&&!!detail.review)||(detail.job.status==='Needs review'&&editor.manual);}
+function labelEditor(t,i){
+  return `<div class="row-label-editor edit-field"><div class="editable-chips">${['genres','tags'].map(kind=>`<div><small>${kind==='genres'?'Genres':'Category tags'}</small> ${t[kind].map(value=>`<button class="chip" data-chip-remove="${i}" data-kind="${kind}" data-value="${esc(value)}" aria-label="Remove ${esc(value)} from ${esc(t.title)}">${esc(value)} ×</button>`).join(' ')||'<span class="muted">—</span>'}</div>`).join('')}</div><div class="label-add"><select data-label-kind="${i}" aria-label="Label type for ${esc(t.title)}"><option value="genres">Genre</option><option value="tags">Category tag</option></select><input data-label-value="${i}" list="allowed-genres" placeholder="Search / enter label" aria-label="Add label to ${esc(t.title)}"><button class="quiet" data-chip-add="${i}">Add</button></div><input data-field="genres" data-index="${i}" aria-label="Genres for ${esc(t.title)}" value="${esc(t.genres.join('; '))}" placeholder="Expert: genres separated by semicolons"><input data-field="tags" data-index="${i}" aria-label="Category tags for ${esc(t.title)}" value="${esc(t.tags.join('; '))}" placeholder="Expert: category tags"></div>`;
+}
+function trackRow(t,i,media,allowEdit){
+  const evidence=media[i]||{};
+  return `<tr class="review-track ${editor.rows.has(i)?'row-editing':''}" data-row="${i}">
+    <td class="review-position">${allowEdit?`<label class="hit-target"><input type="checkbox" data-review-select="${i}" aria-label="Select ${esc(t.title)} for batch edit" ${editor.selected.has(i)?'checked':''}></label>`:''}<span class="read-position">${t.disc}.${t.track}</span><div class="position-inputs">${field('disc',t.disc,'Disc for '+t.title,'number',i)}${field('track',t.track,'Track number for '+t.title,'number',i)}</div></td>
+    <td class="review-name">${field('title',t.title,'Title for track '+(i+1),'text',i)}<small class="source-path">${esc((evidence.file||evidence.path||'').split('/').pop())}</small></td>
+    <td class="review-artist">${field('artist',t.artist,'Artist for '+t.title,'text',i)}</td>
+    <td class="review-quality"><span>${duration(evidence.seconds)}</span><small>${esc(encoding(evidence))} · Art ${evidence.artwork?'✓':'missing'}</small></td>
+    <td class="review-labels"><div class="field-value"><span class="label-prefix">Genres</span> ${chips(t.genres)}<br><span class="label-prefix">Tags</span> ${chips(t.tags)}</div>${allowEdit?labelEditor(t,i):''}</td>
+    <td class="review-controls"><button class="quiet" data-preview="${i}" aria-label="Play ${esc(t.title)}">▶</button>${allowEdit?`<button class="quiet" data-edit-row="${i}" aria-label="Edit ${esc(t.title)}">Edit</button>`:''}</td></tr>`;
+}
+function renderInspector(){
+  const d=detail,j=d.job,tracks=editor.draft.tracks,media=d.review?.tracks||d.sources,allowEdit=editable();
+  $('review-title').textContent=editor.draft.album||'Untitled release';$('review-feedback').hidden=true;
+  const first=d.review?.tracks.find(t=>t.artwork),source=d.sources.find(t=>t.artwork);
+  const art=first?mediaUrl(j.id,first.file,true):source?'/api/media?'+new URLSearchParams({track:source.id,art:1}):'';
+  $('review-body').classList.toggle('editing',editor.editing);
+  $('review-body').innerHTML=`<div class="review-top">${art?`<img class="cover" src="${esc(art)}" alt="${esc(j.album)} artwork">`:'<div class="cover album-square">♫</div>'}<div class="review-meta"><p><strong id="draft-artist">${esc(editor.draft.artist)}</strong> · <span id="draft-year">${editor.draft.year||'Year unknown'}</span> · ${j.track_count} tracks ${badge(j.status)}</p><p>${esc(d.identity.provenance)} · ${esc(j.mode)} · ${esc(d.identity.completeness)}</p>${d.identity.release_ids.map(id=>`<a href="https://musicbrainz.org/release/${id}" target="_blank" rel="noopener noreferrer">Inspect selected MusicBrainz edition ↗</a>`).join(' ')}${d.review?`<p>Destination: <code>rhythm-attic/${esc(d.review.destination)}</code></p>`:''}<p class="muted">Originals retained · No automatic publication</p></div></div>
+    <div id="readiness" class="readiness" aria-live="polite"></div>
+    ${d.recovery?`<section class="recovery"><h3>${esc(d.recovery.title)}</h3><p>${esc(d.recovery.evidence)}</p><p>${esc(d.recovery.action)}</p></section>`:''}
+    ${['Queued','Processing','Editing','Publishing'].includes(j.status)?`<section id="inspector-progress">${processingMarkup(j)}</section>`:''}
+    ${allowEdit?`<div class="editor-heading"><h3>Release metadata & artwork</h3><button id="show-artwork" class="secondary">Replace artwork</button><button id="toggle-edit" class="secondary">${editor.editing?'Read compact view':'Edit metadata'}</button></div>`:''}
+    <div class="album-fields"><label>Album artist${field('artist',editor.draft.artist,'Album artist')}</label><label>Album title${field('album',editor.draft.album,'Album title')}</label><label>Year${field('year',editor.draft.year,'Release year','number')}</label></div>
+    <div class="label-summary"><span>Genres: <span id="album-genres">${chips(RhythmModel.labels(tracks.flatMap(t=>t.genres)))}</span></span><span>Category tags: <span id="album-tags">${chips(RhythmModel.labels(tracks.flatMap(t=>t.tags)))}</span></span></div>
+    <p class="art-coverage compact-note">Artwork: ${number(media.filter(t=>t.artwork).length)} / ${tracks.length} present${d.sources.some(t=>t.artwork_invalid)?` · ${d.sources.filter(t=>t.artwork_invalid).length} unreadable original cover(s)`:''}. ${d.review?'Output image presence, not a validity certificate.':''}</p>
+    ${allowEdit?`<div class="artwork-tools" hidden><label class="secondary">Choose replacement cover<input id="art-file" type="file" accept="image/*"></label><div id="art-paste" tabindex="0" role="textbox" aria-label="Paste album artwork">Paste a copied image here</div><button id="art-clear" class="quiet" disabled>Clear replacement</button><img id="art-preview" class="queue-cover" alt="Replacement cover" hidden><small id="art-status">Replacements apply to every output track when saved.</small></div>`:''}
+    <section class="labels-section"><div class="editor-heading"><h3>Genres & category tags</h3>${allowEdit?'<button id="show-label-create" class="text-button">Create allowed label</button>':''}</div><div id="unknown-labels"></div>${allowEdit?`<div class="label-create" hidden><label>Label type<select id="new-label-kind"><option value="genres">Genre</option><option value="tags">Category tag</option></select></label><label>Create an allowed label<input id="new-label-value" maxlength="100" placeholder="New allowed label"></label><button id="create-label" class="secondary">Create & allow globally</button></div><datalist id="allowed-genres">${d.taxonomy.genres.map(v=>`<option value="${esc(v)}"></option>`).join('')}</datalist><datalist id="allowed-tags">${d.taxonomy.tags.map(v=>`<option value="${esc(v)}"></option>`).join('')}</datalist>`:''}</section>
+    ${allowEdit?`<div class="batch-bar"><label class="check-label"><input id="review-select-all" type="checkbox"> Select all ${tracks.length} tracks</label><span id="review-selection">${editor.selected.size} selected</span><div id="batch-controls" ${editor.selected.size?'':'hidden'}><label>Batch field<select id="batch-field"><option value="genres">Genres</option><option value="tags">Category tags</option><option value="artist">Track artist</option></select></label><label>Operation<select id="batch-operation"><option value="replace">Replace field</option><option value="add">Add labels · keep existing</option></select></label><label>Value<input id="batch-value" list="allowed-genres" placeholder="Search label / semicolon values / artist"></label><button id="apply-batch" class="secondary">Apply to selected draft</button><small>Only the selected field on selected tracks changes. Results appear in the rows; Save applies them to working copies.</small></div></div>`:''}
+    <div class="table-scroll review-table-wrap"><table class="review-table"><thead><tr><th>Select / position</th><th>Title / filename</th><th>Track artist</th><th>Length / encoding / artwork</th><th>Genres / category tags</th><th>Preview / edit</th></tr></thead><tbody>${tracks.map((t,i)=>trackRow(t,i,media,allowEdit)).join('')}</tbody></table></div>
+    ${j.status==='Needs review'?`<section class="retry-tools"><h3>Catalogue recovery</h3><label>Retry mode<select id="retry-mode"><option value="album">Complete album</option><option value="single" ${j.track_count===1?'':'disabled'}>Single track</option><option value="partial">Partial album</option></select></label><label>Exact MusicBrainz release UUID (optional)<input id="retry-release" value="${esc(j.release_id||'')}" placeholder="Choose the intended edition on MusicBrainz"></label><a target="_blank" rel="noopener noreferrer" href="https://musicbrainz.org/search?${esc(new URLSearchParams({query:j.artist+' '+j.album,type:'release',method:'indexed'}))}">Search MusicBrainz releases ↗</a><button id="retry-job" class="secondary">Retry matching</button><button id="force-artwork" class="secondary">Retry & fetch new artwork</button><button id="manual-mode" class="secondary">${editor.manual?'Manual editor active':'Use manual metadata instead'}</button><p class="muted">Retry keeps the inspector open. Exact editions still need your verification. Matching thresholds are unchanged.</p></section>`:''}
+    ${['Curated','Needs review','Queued'].includes(j.status)?'<button id="ungroup-job" class="quiet">Return tracks to Incoming for regrouping…</button>':''}
+    <details><summary>Source tracks & original artwork (${d.sources.length})</summary><div class="source-evidence">${d.sources.map(s=>`<div>${s.artwork?`<img class="queue-cover" src="/api/media?${new URLSearchParams({track:s.id,art:1})}" alt="Source artwork for ${esc(s.title)}" loading="lazy">`:''}<strong>${esc(s.title)}</strong><small>${esc(s.path)} · ${duration(s.seconds)} · ${esc(s.codec)}${s.artwork_invalid?' · Unreadable original artwork (not usable)':''}</small></div>`).join('')}</div></details>
+    <details><summary>Matching log & technical record</summary><p>Job: ${esc(j.id)} · Revision: ${esc(d.review?.revision||'No reviewed revision')}</p>${d.log?`<pre class="review-log">${esc(d.log.replace(/\x1b\[[0-9;]*m/g,''))}</pre>`:'<p>No matching log yet.</p>'}</details>`;
+  if($('retry-mode'))$('retry-mode').value=j.mode==='manual'?'album':j.mode;
+  renderUnknown();updateEditorState();
+}
+function localBlockers(){
+  const blockers=[...(detail.readiness?.blockers||[])].filter(b=>!['genres','tags'].includes(b.code));
+  const unknown=RhythmModel.unknown(editor.draft,detail.taxonomy);if(unknown.length)blockers.push({code:'labels',message:unknown.map(v=>`${v.kind}: ${v.value}`).join(' · ')});
+  if(draftDirty())blockers.unshift({code:'draft',message:'Unsaved changes. Save and inspect the new revision before approval.'});
+  if(editor.stale)blockers.unshift({code:'stale',message:'Server revision changed. Reload before continuing.'});
+  if(editor.busy)blockers.unshift({code:'busy',message:'Operation in progress.'});
+  return blockers;
+}
+function updateEditorState(){
+  if(!editor||!detail)return;
+  const blockers=localBlockers(),canPublish=!blockers.length&&!!detail.review&&detail.job.status==='Curated';
+  $('readiness').innerHTML=`<strong>${draftDirty()?'Unsaved draft':detail.job.status==='Approved'?'Published revision':detail.readiness.can_review?'Prepared for your review':'Not ready for publication'}</strong>${blockers.length?`<ul>${blockers.map(b=>`<li>${esc(b.message)}</li>`).join('')}</ul>`:'<p>All preparation checks pass. You still need to verify metadata, edition and artwork, then explicitly approve.</p>'}`;
+  const oldFocus=document.activeElement?.id;
+  $('review-actions').innerHTML=`<span id="draft-state" class="muted">${editor.busy?'Working…':editor.stale?'Draft preserved · server changed':draftDirty()?'Unsaved changes':'Saved / unchanged'}</span>${editable()?`<button id="save-changes" class="${draftDirty()||editor.manual?'primary':'secondary'}" ${editor.busy||editor.stale||(!draftDirty()&&!editor.manual)?'disabled':''}>${editor.manual?'Prepare manual copy':'Save changes'}</button>`:''}${detail.job.status==='Curated'?`<button id="request-approval" class="primary" ${canPublish?'':'disabled'}>Review publication →</button>`:detail.job.status==='Approved'?'<button id="review-next" class="primary">Review next →</button>':''}<button data-close="review-dialog" class="secondary">Close</button>`;
+  if(oldFocus&&$(oldFocus))$(oldFocus).focus({preventScroll:true});
+  $('album-genres').innerHTML=chips(RhythmModel.labels(editor.draft.tracks.flatMap(t=>t.genres)));$('album-tags').innerHTML=chips(RhythmModel.labels(editor.draft.tracks.flatMap(t=>t.tags)));
+}
+function renderUnknown(){if(!editor||!$('unknown-labels'))return;const unknown=RhythmModel.unknown(editor.draft,detail.taxonomy);
+  $('unknown-labels').innerHTML=unknown.length?unknown.map((v,i)=>`<div class="unknown-label"><span><strong>${esc(v.value)}</strong> · ${v.kind==='genres'?'Genre':'Category tag'} · ${v.count} affected tracks</span>${editable()?`<button class="secondary" data-allow="${i}">Allow globally</button><label>Map to allowed value<select data-map-value="${i}"><option value="">Choose ${v.kind==='genres'?'genre':'tag'}</option>${detail.taxonomy[v.kind].map(x=>`<option>${esc(x)}</option>`).join('')}</select></label><button class="secondary" data-map="${i}">Map in draft</button><button class="quiet" data-remove="${i}">Remove from draft</button>`:''}</div>`).join(''):'<p class="compact-note">All present genres and category tags are allowed. Empty values are permitted.</p>';
+}
+function syncReadValues(){editor.draft.tracks.forEach((t,i)=>{const row=document.querySelector(`[data-row="${i}"]`);if(!row)return;for(const input of row.querySelectorAll('[data-field]')){input.value=['genres','tags'].includes(input.dataset.field)?t[input.dataset.field].join('; '):t[input.dataset.field];}row.querySelector('.read-position').textContent=`${t.disc}.${t.track}`;row.querySelector('.review-name .field-value').textContent=t.title;row.querySelector('.review-artist .field-value').textContent=t.artist;row.querySelector('.review-labels .field-value').innerHTML=`<span class="label-prefix">Genres</span> ${chips(t.genres)}<br><span class="label-prefix">Tags</span> ${chips(t.tags)}`;const labels=row.querySelector('.row-label-editor');if(labels)labels.outerHTML=labelEditor(t,i);});renderUnknown();updateEditorState();}
+inspector.addEventListener('input',e=>{
+  const n=e.target;if(!editor||editor.busy)return;
+  if(n.dataset.album){editor.draft[n.dataset.album]=n.type==='number'?Number(n.value)||'':n.value;n.previousElementSibling.textContent=n.value||'—';$('draft-artist').textContent=editor.draft.artist;$('draft-year').textContent=editor.draft.year||'Year unknown';$('review-title').textContent=editor.draft.album;}
+  if(n.dataset.field){const key=n.dataset.field;editor.draft.tracks[Number(n.dataset.index)][key]=['genres','tags'].includes(key)?RhythmModel.labels(n.value):['disc','track'].includes(key)?Number(n.value):n.value;}
+  if(n.dataset.album||n.dataset.field){renderUnknown();updateEditorState();}
+});
+inspector.addEventListener('change',e=>{
+  if(e.target.dataset.reviewSelect!==undefined){const i=Number(e.target.dataset.reviewSelect);e.target.checked?editor.selected.add(i):editor.selected.delete(i);$('review-selection').textContent=`${editor.selected.size} selected`;$('batch-controls').hidden=!editor.selected.size;}
+  if(e.target.dataset.labelKind!==undefined){const i=e.target.dataset.labelKind;inspector.querySelector(`[data-label-value="${i}"]`).setAttribute('list','allowed-'+e.target.value);}
+  if(e.target.id==='batch-field'){const kind=e.target.value;$('batch-value').setAttribute('list','allowed-'+kind);$('batch-operation').querySelector('[value=add]').disabled=kind==='artist';if(kind==='artist')$('batch-operation').value='replace';}
+});
+inspector.addEventListener('click',async e=>{
+  const b=e.target.closest('button');if(!b||!editor)return;
+  if(b.id==='show-artwork'){$('review-body').querySelector('.artwork-tools').hidden=false;$('art-file').focus({preventScroll:true});}
+  if(b.id==='show-label-create'){$('review-body').querySelector('.label-create').hidden=false;$('new-label-value').focus({preventScroll:true});}
+  if(b.dataset.editRow!==undefined){const i=Number(b.dataset.editRow);editor.rows.has(i)?editor.rows.delete(i):editor.rows.add(i);document.querySelector(`[data-row="${i}"]`).classList.toggle('row-editing',editor.rows.has(i));if(!editor.rows.has(i))syncReadValues();}
+  if(b.dataset.preview!==undefined){const i=Number(b.dataset.preview),t=detail.review?.tracks[i],s=detail.sources[i];if(t)play(mediaUrl(editor.id,t.file),t.title,t.artist);else if(s)play('/api/media?track='+encodeURIComponent(s.id),s.title,s.artist);}
+  if(b.id==='toggle-edit'){editor.editing=!editor.editing;$('review-body').classList.toggle('editing',editor.editing);b.textContent=editor.editing?'Read compact view':'Edit metadata';if(!editor.editing)syncReadValues();}
+  if(b.id==='apply-batch'){if(!editor.selected.size){feedback('Select tracks before applying a batch change.');return;}RhythmModel.batch(editor.draft,[...editor.selected],$('batch-field').value,$('batch-value').value,$('batch-operation').value);syncReadValues();toast(`Draft updated: ${editor.selected.size} selected tracks. Save to apply to audio.`);}
+  if(b.dataset.chipAdd!==undefined){const i=Number(b.dataset.chipAdd),kind=inspector.querySelector(`[data-label-kind="${i}"]`).value,value=inspector.querySelector(`[data-label-value="${i}"]`).value;if(!value.trim()){feedback('Choose or enter a label first.');return;}RhythmModel.batch(editor.draft,[i],kind,value,'add');syncReadValues();}
+  if(b.dataset.chipRemove!==undefined){const i=Number(b.dataset.chipRemove);editor.draft.tracks[i][b.dataset.kind]=editor.draft.tracks[i][b.dataset.kind].filter(v=>v.toLocaleLowerCase()!==b.dataset.value.toLocaleLowerCase());syncReadValues();}
+  if(b.dataset.allow!==undefined||b.id==='create-label'){
+    const item=b.id==='create-label'?{kind:$('new-label-kind').value,value:$('new-label-value').value}:RhythmModel.unknown(editor.draft,detail.taxonomy)[Number(b.dataset.allow)];
+    b.disabled=true;try{detail.taxonomy=await api('/api/taxonomy/allow',item);if(b.id==='create-label')$('new-label-value').value='';renderUnknown();updateEditorState();toast('Allowed globally. Your draft is preserved; no audio or publication changed.');await refresh();}catch(err){feedback(err.message);}finally{b.disabled=false;}
+  }
+  if(b.dataset.map!==undefined||b.dataset.remove!==undefined){const index=Number(b.dataset.map??b.dataset.remove),v=RhythmModel.unknown(editor.draft,detail.taxonomy)[index],replacement=b.dataset.map!==undefined?document.querySelector(`[data-map-value="${index}"]`).value:'';if(b.dataset.map!==undefined&&!replacement){feedback('Choose an allowed value before mapping.');return;}RhythmModel.replaceLabel(editor.draft,v.kind,v.value,replacement);syncReadValues();toast(`Draft ${replacement?'mapped':'removed'} ${v.value} on ${v.count} tracks. Save to apply.`);}
+  if(b.id==='save-changes')await saveDraft();
+  if(b.id==='manual-mode'&&!editor.manual)guardDraft(()=>{editor.manual=true;editor.editing=true;editor.draft=RhythmModel.draft(detail,true);editor.baseline=RhythmModel.copy(editor.draft);renderInspector();});
+  if(['retry-job','force-artwork'].includes(b.id))guardDraft(()=>runJobAction('retry',{mode:$('retry-mode').value,release_id:$('retry-release').value.trim(),force_artwork:b.id==='force-artwork'}));
+  if(b.id==='ungroup-job')guardDraft(()=>{const box=$('review-feedback');box.innerHTML='Return every source track to Incoming? Working copies remain retained. <button id="confirm-regroup" class="secondary">Confirm regroup</button>';box.hidden=false;});
+  if(b.id==='confirm-regroup')await runJobAction('ungroup',{});
+  if(b.id==='request-approval'){if(localBlockers().length){feedback('Resolve the readiness checklist before approval.');return;}approvalRevision=detail.review.revision;$('approval-summary').textContent=`${detail.review.destination} · ${detail.review.tracks.length} tracks · Exact revision ${approvalRevision.slice(0,16)}`;$('approval-check').checked=false;$('confirm-approve').disabled=true;$('approve-dialog').querySelector('.dialog-feedback').hidden=true;$('approve-dialog').showModal();}
+  if(b.id==='review-next'){const next=snapshot.decisions.find(j=>j.id!==editor.id);if(next)inspect(next.id);else{inspector.close();reviewView('all');}}
+});
+inspector.addEventListener('change',e=>{if(e.target.id==='review-select-all'){editor.selected=e.target.checked?new Set(editor.draft.tracks.map((_,i)=>i)):new Set();inspector.querySelectorAll('[data-review-select]').forEach(n=>n.checked=e.target.checked);$('review-selection').textContent=`${editor.selected.size} selected`;$('batch-controls').hidden=!editor.selected.size;}});
+async function loadArtwork(file){if(!file)return;try{if(!file.type.startsWith('image/')||file.size>10*1024**2)throw new Error('Choose an image smaller than 10 MiB.');const data=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(new Error('Image could not be read'));r.readAsDataURL(file);});editor.draft.artwork=data.split(',')[1];$('art-preview').src=data;$('art-preview').hidden=false;$('art-clear').disabled=false;$('art-status').textContent='Replacement selected · will update every output track when saved. Server validates the image.';updateEditorState();}catch(e){feedback(e.message);}}
+inspector.addEventListener('change',e=>{if(e.target.id==='art-file')loadArtwork(e.target.files[0]);});
+inspector.addEventListener('paste',e=>{if(!e.target.closest('#art-paste'))return;const image=[...e.clipboardData.items].find(x=>x.type.startsWith('image/'));if(image){e.preventDefault();loadArtwork(image.getAsFile());}else feedback('Copy the image itself, not its URL, or choose an image file.');});
+inspector.addEventListener('click',e=>{if(e.target.closest('#art-clear')){editor.draft.artwork='';$('art-file').value='';$('art-preview').hidden=true;$('art-clear').disabled=true;$('art-status').textContent='No replacement selected; existing artwork retained.';updateEditorState();}});
+async function saveDraft(){
+  if(!editor||editor.busy||editor.stale)return;
+  const invalid=[...inspector.querySelectorAll('input.edit-field,.edit-field input')].find(n=>!n.disabled&&!n.checkValidity());if(invalid){editor.editing=true;$('review-body').classList.add('editing');invalid.reportValidity();feedback('Complete the highlighted metadata before saving.');return;}
+  const id=editor.id,manual=editor.manual;editor.busy=true;updateEditorState();
+  try{await api(`/api/jobs/${id}/${manual?'manual':'edit'}`,RhythmModel.payload(editor.draft,detail.job.revision,manual));editor.busy=false;editor.baseline=RhythmModel.copy(editor.draft);await inspect(id,true);toast(manual?'Manual preparation queued. Nothing publishes automatically.':'Changes saved as a new revision. Inspect it before approval.');await refresh();}
+  catch(e){if(editor?.id===id){editor.busy=false;updateEditorState();}feedback(e.message);}
+}
+async function runJobAction(action,data){const id=editor.id;editor.busy=true;updateEditorState();try{await api(`/api/jobs/${id}/${action}`,data);editor.busy=false;if(action==='ungroup'){inspector.close();view('incoming');}else await inspect(id,true);await refresh();toast(action==='retry'?'Retry queued; inspector stays open.':'Tracks returned to Incoming.');}catch(e){if(editor?.id===id){editor.busy=false;updateEditorState();}feedback(e.message);}}
+$('approval-check').onchange=e=>$('confirm-approve').disabled=!e.target.checked;
+$('confirm-approve').onclick=async()=>{const b=$('confirm-approve');b.disabled=true;try{if(!editor||draftDirty()||editor.stale||detail.review.revision!==approvalRevision)throw new Error('Review changed. Close this confirmation and inspect the current revision.');editor.busy=true;await api(`/api/jobs/${editor.id}/approve`,{revision:approvalRevision});editor.busy=false;$('approve-dialog').close();lastPublished=editor.id;await inspect(editor.id,true);toast('Explicitly approved and published. You can review the next release.');await refresh();}catch(e){if(editor)editor.busy=false;feedback(e.message,'error',$('approve-dialog'));b.disabled=!$('approval-check').checked;}};

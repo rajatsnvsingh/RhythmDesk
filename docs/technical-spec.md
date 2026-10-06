@@ -130,6 +130,12 @@ All API routes require a session except sign-in and session bootstrap. Mutating 
 
 Grouped route suffixes such as `/edit` above extend `/api/jobs/{id}`. Snapshot supports offset/limit/search/status; drawer listing paginates by 200 entries and filters the current directory. Source imports expose status/count/bytes and publish a complete batch to Incoming via rename.
 
+Snapshot additionally accepts `track_sort`, `job_q`, `job_filter`, `job_offset`, `job_limit`, `job_sort` and `job_direction`. Review filters are `all` (attention + ready), `attention`, `ready`, `processing` and `history`. An omitted filter retains the all-job API behavior. The UI requests 50-row pages; aggregate `review_counts` are computed over all jobs, not the current page. `decisions` and `active_jobs` are bounded Home previews, not total counts.
+
+Snapshot jobs and detail expose `readiness` (`can_review`, `can_publish`, revision and blockers), `recovery` (reason/evidence/action) and `identity` (provenance, validated release UUIDs and completeness wording). These are presentation evidence only; `/approve` still verifies the authoritative record and delegates publisher checks. Unknown labels and destination conflicts exclude a Curated release from Ready.
+
+`/edit` accepts optional base64 `artwork`, validated/normalized by the same cover validator used in manual mode and embedded in every disposable output track. It still requires every reviewed track and the exact revision. Manual grouping may start with blank album hints; manual submission must still provide valid required metadata before generating any output.
+
 Media serving supports byte ranges, including suffix requests; valid ranges return 206, invalid ranges 416. `art=1` returns usable embedded artwork, not an arbitrary file path.
 
 ## Limits and timing
@@ -141,7 +147,7 @@ Media serving supports byte ranges, including suffix requests; valid ranges retu
 | Copy/upload batch | 10,000 regular files / 50 GiB |
 | Browser upload file | 2 GiB default (`CURATOR_UPLOAD_FILE_BYTES` override) |
 | Manual image | 10 MiB / 20 megapixels |
-| JSON body | 512,000 bytes normally; 16 MiB for manual submission |
+| JSON body | 512,000 bytes normally; 16 MiB for manual submission and working-copy edits with artwork |
 | ffprobe | 90-second per-file timeout |
 | Beets import | 1,800-second timeout |
 | Recording-release requests | 60-second HTTP timeout; approximately 1.05 seconds between lookups |
@@ -161,5 +167,7 @@ Staging purge uses confirmation plus maintenance/activity locks and retains libr
 ## Verification and extension points
 
 Run `python -m unittest discover -s tests`. Coverage includes real tiny audio, Beets copy imports, manual artwork/tagging, original preservation, watermark cleanup, mode behavior, revision changes, taxonomy, source/upload safety, HTTP authentication/ranges, archival and deployment archive checks.
+
+Run `node --test tests/test_editor.cjs` for pure draft/label/batch regressions; no browser or npm dependency is required. CI runs both suites and JavaScript syntax checks. See [UX verification](ux-overhaul.md) for synthetic browser scenarios and the remaining physical-phone acceptance checklist.
 
 Changes to publishing, paths or revisions should extend these tests first. Keep new processing operations confined to working copies; add progress updates without exposing raw credentials; retain explicit revision-bound approval as the only normal publication path.

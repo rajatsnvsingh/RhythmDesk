@@ -1,6 +1,7 @@
 """Read-only Rhythm Attic inventory and statistics, cached for the UI."""
 import collections
 import json
+import os
 import time
 
 from common import AUDIO, connect, safe_child
@@ -9,12 +10,15 @@ from worker import inspect_audio
 
 def scan_library(settings):
     started = time.time()
-    result = {'available': settings.library.is_dir(), 'scanned_at': started,
+    result = {'available': settings.library.is_dir() and os.access(settings.library, os.R_OK | os.X_OK), 'scanned_at': started,
               'artists': 0, 'albums': 0, 'tracks': 0, 'bytes': 0, 'seconds': 0,
               'lossless': 0, 'lossy': 0, 'missing_art': 0, 'unreadable': 0,
               'genres': 0, 'tags': 0, 'formats': {}, 'releases': [], 'errors': []}
+    result.update(with_genres=0, with_tags=0, audio_files=0, audio_bytes=0)
     if not result['available']:
         result['errors'] = ['Library is not mounted or readable by the UI account']
+        with connect(settings) as db:
+            db.execute("INSERT OR REPLACE INTO meta VALUES('library_stats',?)", (json.dumps(result),))
         return result
     albums = {}
     formats = collections.Counter()
@@ -35,6 +39,8 @@ def scan_library(settings):
             relative = path.relative_to(settings.library).as_posix()
             safe_child(settings.library, relative)
             stat = path.stat()
+            result['audio_files'] += 1
+            result['audio_bytes'] += stat.st_size
             signature = f'{stat.st_size}:{stat.st_mtime_ns}'
             prior = previous.get(relative)
             if prior and prior['signature'] == signature and 'genres' in prior['metadata']:
@@ -51,12 +57,17 @@ def scan_library(settings):
             album = albums.setdefault(folder, {'path': folder, 'artist': metadata['albumartist'] or metadata['artist'],
                                               'album': metadata['album'] or path.parent.name,
                                               'year': metadata['year'], 'tracks': 0, 'bytes': 0,
-                                              'seconds': 0, 'formats': set(), 'missing_art': 0})
+                                              'seconds': 0, 'formats': set(), 'missing_art': 0,
+                                              'with_genres': 0, 'with_tags': 0, 'genres': set(), 'tags': set()})
             album['tracks'] += 1
             album['bytes'] += stat.st_size
             album['seconds'] += metadata['seconds']
             album['formats'].add(path.suffix[1:].upper())
             album['missing_art'] += not metadata['artwork']
+            for kind in ('genres', 'tags'):
+                album['with_' + kind] += bool(metadata[kind])
+                album[kind].update(metadata[kind])
+                result['with_' + kind] += bool(metadata[kind])
             result['tracks'] += 1
             result['bytes'] += stat.st_size
             result['seconds'] += metadata['seconds']
@@ -68,7 +79,7 @@ def scan_library(settings):
             result['unreadable'] += 1
             if len(result['errors']) < 20:
                 result['errors'].append(f'{path.name}: {error}')
-    result['releases'] = [{**value, 'formats': sorted(value['formats'])} for value in albums.values()]
+    result['releases'] = [{**value, **{key: sorted(value[key]) for key in ('formats', 'genres', 'tags')}} for value in albums.values()]
     result['artists'] = len({album['artist'] for album in albums.values()})
     result['albums'] = len(albums)
     result['formats'] = dict(formats)

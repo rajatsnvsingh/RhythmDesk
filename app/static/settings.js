@@ -1,22 +1,24 @@
 'use strict';
-const settingsNav=document.createElement('button');
-settingsNav.dataset.view='settings'; settingsNav.textContent='Settings';
-document.querySelector('nav').append(settingsNav);
-settingsNav.addEventListener('click',()=>loadSettings());
-async function loadSettings() {
-  try { renderSettings(await api('/api/settings')); $('page-title').textContent='Settings'; }
-  catch(e){error(e.message);}
-}
-function renderSettings(s) {
-  $('settings-status').textContent=s.runtime.paused?'● Intake paused':'● Intake enabled';
-  $('settings-status').className='status '+(s.runtime.paused?'warning':'live');
-  $('mount-table').innerHTML='<div class="table-scroll"><table><thead><tr><th>Mapping</th><th>Host directory</th><th>App directory</th><th>Access from Web UI</th></tr></thead><tbody>'+s.mounts.map(m=>`<tr><td>${esc(m.key)}</td><td><code>${esc(m.host)}</code></td><td><code>${esc(m.internal)}</code></td><td>${!m.exists?'Not mounted':!m.readable?'Not readable':m.writable?'Read / write':'Read only'}</td></tr>`).join('')+'</tbody></table></div>';
-  $('intake-paths').innerHTML=`<span class="muted">Drop files into</span> <code>${esc(s.incoming)}</code><br><span class="muted">Awaiting approval</span> <code>${esc(s.curated)}</code><br><span class="muted">Needs review</span> <code>${esc(s.review)}</code><br><small>Docker: the Web UI reads the library; only the isolated publisher can write after approval. Local demo access may differ.</small>`;
+async function loadSettings(){try{const s=await api('/api/settings');renderSettings(s);await stagingCount();}catch(e){feedback(e.message);}}
+function renderSettings(s){
+  $('settings-status').textContent=s.runtime.paused?'Processing paused':'Processing enabled';
+  $('mount-table').innerHTML='<div class="mount-list">'+s.mounts.map(m=>`<div><strong>${esc(m.key)}</strong><code>${esc(m.host)}</code><small>App: ${esc(m.internal)} · ${!m.exists?'Not mounted':!m.readable?'Not readable':m.writable?'Read / write':'Read only'}</small></div>`).join('')+'</div>';
+  $('intake-paths').innerHTML=`Incoming: <code>${esc(s.incoming)}</code><br>Curated: <code>${esc(s.curated)}</code><br>Needs review: <code>${esc(s.review)}</code><p>The web app reads the library; only the isolated publisher can write after explicit approval.</p>`;
   for(const [key,value] of Object.entries(s.runtime)){const el=$('runtime-form').elements[key];if(typeof value==='boolean')el.checked=value;else el.value=value;}
   const defaults={STAGING_PATH:'/srv/media/music/staging',STATE_PATH:'/srv/media/music/curator-state',LIBRARY_PATH:'/srv/media/music/rhythm-attic'};
-  for(const m of s.mounts)$('paths-form').elements[m.key].value=s.plan?.[m.key] || (m.host.startsWith('/')?m.host:defaults[m.key]);
-  $('download-paths').hidden=!s.plan;
-  $('plan-status').textContent=s.plan?'Saved plan · not applied automatically':'No saved plan';
+  for(const m of s.mounts)$('paths-form').elements[m.key].value=s.plan?.[m.key]||(m.host.startsWith('/')?m.host:defaults[m.key]);
+  $('download-paths').hidden=!s.plan;$('plan-status').textContent=s.plan?'Saved plan · not applied':'No pending plan';
+  if(s.source){$('source-mapping').textContent=`${s.source.host} → ${s.source.mount} · ${s.source.available?'Available · read only':'Not mounted or readable'}`;$('source-settings').elements.subdirectory.value=s.source.subdirectory==='.'?'':s.source.subdirectory;}
+  for(const key of ['genres','tags'])$('taxonomy-form').elements[key].value=(s.taxonomy?.[key]||[]).join('; ');
 }
-$('runtime-form').onsubmit=async e=>{e.preventDefault();const f=e.target.elements;try{const s=await api('/api/settings/runtime',{stable_seconds:Number(f.stable_seconds.value),scan_interval:Number(f.scan_interval.value),automatic_grouping:f.automatic_grouping.checked,paused:f.paused.checked});renderSettings(s);toast('Intake settings saved. Applies on the worker’s next cycle.');}catch(err){toast(err.message);}};
-$('paths-form').onsubmit=async e=>{e.preventDefault();try{renderSettings(await api('/api/settings/paths',Object.fromEntries(new FormData(e.target))));toast('Directory plan saved. Current library destination is unchanged.');}catch(err){toast(err.message);}};
+async function stagingCount(){try{storage=await api('/api/staging');storageAt=Date.now();renderStorage();}catch(e){$('staging-count').textContent=e.message;}}
+function renderStorage(){const html=storage?Object.entries(storage.breakdown||{}).map(([name,value])=>`<div class="signal"><span>${esc(name)}</span><strong>${number(value.files)} files · ${bytes(value.bytes)}</strong></div>`).join('')+`<p class="compact-note">Total ${number(storage.files)} files · ${bytes(storage.bytes)} · counted ${esc(new Date(storageAt).toLocaleTimeString())}</p>`:empty('Storage count pending…');$('home-storage').innerHTML=html;$('staging-count').innerHTML=html+(storage?`<code>${esc(storage.path)}</code>`:'');}
+$('refresh-staging').onclick=stagingCount;
+function saving(form,fn){form.onsubmit=async e=>{e.preventDefault();const b=form.querySelector('button');b.disabled=true;try{await fn(form);toast('Settings saved. Existing library audio unchanged.');await refresh();}catch(err){feedback(err.message);}finally{b.disabled=false;}};}
+saving($('runtime-form'),async f=>{const s=await api('/api/settings/runtime',{stable_seconds:0,scan_interval:Number(f.elements.scan_interval.value),automatic_grouping:f.elements.automatic_grouping.checked,paused:f.elements.paused.checked});s.taxonomy=await api('/api/taxonomy');renderSettings(s);});
+saving($('taxonomy-form'),async f=>{await api('/api/taxonomy',Object.fromEntries(new FormData(f)));});
+saving($('paths-form'),async f=>{const s=await api('/api/settings/paths',Object.fromEntries(new FormData(f)));s.taxonomy=await api('/api/taxonomy');renderSettings(s);});
+saving($('source-settings'),async f=>{await api('/api/settings/source',{subdirectory:f.elements.subdirectory.value.trim()});drawerSelected.clear();await loadSettings();});
+$('purge-staging').onclick=async()=>{if(importBusy){feedback('Finish the current transfer before purging staging.');return;}await stagingCount();$('purge-form').reset();$('purge-form').querySelector('button.danger').disabled=true;$('purge-dialog').querySelector('.dialog-feedback').hidden=true;$('purge-scope').textContent=storage?`${number(storage.files)} files · ${bytes(storage.bytes)} · ${storage.path}`:'Staging count unavailable. Verify the configured scope before proceeding.';$('purge-dialog').showModal();};
+$('purge-form').elements.confirmation.onchange=e=>$('purge-form').querySelector('button.danger').disabled=!e.target.checked;
+$('purge-form').onsubmit=async e=>{e.preventDefault();const b=e.target.querySelector('button.danger');b.disabled=true;feedback('Waiting for current worker activity, then permanently purging staging…','success',$('purge-dialog'));try{const s=await api('/api/staging/purge',{confirmation:e.target.elements.confirmation.checked});$('purge-dialog').close();selected.clear();closePlayer();toast(`Permanently deleted ${number(s.files)} staging files. Library and state archives retained.`);await stagingCount();await refresh();}catch(err){feedback(err.message,'error',$('purge-dialog'));}finally{b.disabled=!e.target.elements.confirmation.checked;}};

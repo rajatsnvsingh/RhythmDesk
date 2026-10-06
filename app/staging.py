@@ -8,13 +8,23 @@ from common import connect, event
 def statistics(settings):
     root = settings.incoming.parent
     files = size = 0
+    breakdown = {name: dict(files=0, bytes=0) for name in ('Incoming originals', 'Curated copies', 'Needs review / work', 'Temporary / other')}
     for path in root.rglob('*'):
         if path.is_symlink():
             continue
         if path.is_file():
+            try:
+                amount = path.stat().st_size
+            except FileNotFoundError:
+                continue
             files += 1
-            size += path.stat().st_size
-    return {'files': files, 'bytes': size, 'path': str(root)}
+            size += amount
+            top = path.relative_to(root).parts[0]
+            kind = {settings.incoming.name: 'Incoming originals', settings.curated.name: 'Curated copies',
+                    settings.review.name: 'Needs review / work'}.get(top, 'Temporary / other')
+            breakdown[kind]['files'] += 1
+            breakdown[kind]['bytes'] += amount
+    return {'files': files, 'bytes': size, 'path': str(root), 'breakdown': breakdown}
 
 
 def purge(settings, confirmation):
