@@ -1,155 +1,135 @@
-# Rhythm Desk
+<p align="center"><img src="docs/assets/banner.svg" alt="Rhythm Desk — from the messy drawer to a library you trust" width="100%"></p>
 
-A self-hosted music curation desk powered by Beets, MusicBrainz, ffprobe, and a
-compact Web UI. Import messy collections, inspect cleaned releases, then explicitly
-approve publication. Acquisition tools such as slskd remain separate.
+<p align="center">
+  <a href="https://github.com/rajatsnvsingh/RhythmDesk/actions/workflows/tests.yml"><img src="https://github.com/rajatsnvsingh/RhythmDesk/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+  <img src="https://img.shields.io/badge/Python-3.12%2B-79dfb0?style=flat-square" alt="Python 3.12 or newer">
+  <img src="https://img.shields.io/badge/Deploy-Docker_Compose-98cfe7?style=flat-square" alt="Docker Compose">
+  <img src="https://img.shields.io/badge/Publishing-Your_approval_only-79dfb0?style=flat-square" alt="Explicit approval required">
+</p>
 
-## Safety model
+<p align="center"><strong>A self-hosted review desk for the music you actually want to keep.</strong><br>Import messy collections. Match or manually curate. Inspect every release. Publish only when you say so.</p>
 
-- Nothing publishes automatically, regardless of match confidence.
-- Originals are retained. Curation works on copies.
-- Unknown genres/category tags block publication until corrected or allowed.
-- Ambiguous matches remain Needs review; exact MusicBrainz release IDs can resolve editions.
-- Existing library destinations are never replaced. Changed audio invalidates approval.
-- Final output contains labelled audio with embedded artwork. Non-audio files and tracks
-  shorter than 10 seconds are excluded from output, not deleted from originals.
-- Worker, web, and publisher use separate non-root identities. Only publisher has a
-  writable library mount; the worker cannot reach its publishing socket.
+<p align="center"><a href="docs/user-guide.md">User guide</a> · <a href="docs/deployment.md">Deployment</a> · <a href="docs/architecture.md">Architecture</a> · <a href="docs/technical-spec.md">Technical specification</a></p>
 
-Output: Artist/Album (Year)/NN - Track.ext. Filename characters are sanitized while
-metadata retains actual titles. Album, single-track, and partial-release matching
-are supported; incomplete albums require appropriate matching mode and explicit review.
+## A calm desk for a messy collection
 
-## Docker setup
+Rhythm Desk pairs **Beets, MusicBrainz and ffprobe** with a compact, data-rich web app. Loose songs, nested folders and mixed collections all enter the same review workflow. Acquisition stays separate: bring your existing files, or use your own acquisition tools.
 
-Prerequisites: Docker Compose on Linux, Python 3 for bootstrap, and ACL tools (setfacl).
+![Rhythm Desk overview with pipeline counts, processing progress and library statistics](docs/assets/screenshots/overview.jpg)
 
-1. Copy .env.example to .env. Set a strong random CURATOR_UI_TOKEN, staging/state/library
-   paths, and SOURCE_PATH for the read-only music drawer.
-2. Create the library directory if starting fresh. Run:
-   sudo python3 app/bootstrap.py --staging <path> --state <path> --library <path>
-   to provision restricted service identities and scoped ACLs. Inspect the script first.
-3. Give the UI identity read/traverse permissions on selected drawer directories, not write.
-   Docker additionally mounts this source read-only.
-4. Run docker compose up --build -d and verify all three services remain running.
-5. The example UI binds to localhost. Use an SSH tunnel or deliberately configure a LAN
-   binding and CURATOR_ALLOWED_HOSTS. Never expose plain HTTP to the Internet.
+*Screenshots use synthetic audio and sample artists in an isolated demo. No real library, credentials or private server addresses are shown. Demo publication is disabled.*
 
-Default worker/UI/publisher UIDs are 10001/10002/10003 with shared group 10000.
-Check for ID conflicts before bootstrap. Shared SQLite database, WAL and SHM files
-must remain group-writable. Back up state before maintenance.
+### What makes it useful
 
-## Ingestion and the music drawer
+| Bring the mess | Make it yours | Keep the library sacred |
+| :--- | :--- | :--- |
+| Read-only server-side music drawer | Album, single and partial-release matching | Explicit approval for **every** release |
+| Browser file/folder uploads and drag-and-drop | Manual metadata with pasted or chosen cover art | Original files retained during curation |
+| Loose tracks and nested collections | Track titles, artists, year and numbering | Existing albums are never replaced |
+| Detection without automatic scanning | Website-watermark cleanup before matching | Unapproved genres/tags block publication |
+| Desktop and phone-friendly layouts | Audio previews and visible processing stages | Revision-bound approval and audit receipts |
 
-The drawer is a read-only host music folder configured by SOURCE_PATH and mounted
-at /mnt/music-source in the web container. Settings shows this mapping and selects
-a relative subfolder without changing Docker mounts. Host mount changes require
-administrator configuration.
+## See the workflow
 
-Incoming is the writable ingestion folder at <STAGING_PATH>/incoming.
-Use Incoming → Browse Nexus music to select files or folders. Selections are copied
-server-side with relative paths preserved. Source files are never moved or edited.
-Staging, state, and published-library folders are excluded to avoid recursive imports.
-A whole copied batch becomes visible as incoming/Import-<id>/ only after completion.
-The UI shows progress; interrupted copies remain outside Incoming for inspection.
+### Inspect before you approve
 
-Alternatively, drag files/folders from your computer or use the file/folder pickers.
-Uploads stream to temporary staging, then expose incoming/Upload-<id>/ only after
-all files succeed. Files on your computer remain untouched. Re-select failed batches
-to retry; abandoned temporary files are included in staging statistics and purge.
+Review the proposed destination, embedded cover, track-level metadata and audio. Corrections create a new revision that must be reviewed again.
 
-Click Scan when ready. New files are detected, but scanning remains user-controlled.
-Browser limit: 2 GiB per file. Upload batches and drawer imports: 50 GiB/10,000 files.
-SMB is suitable for larger transfers.
+![Release inspector with artwork, editable metadata and numbered tracks](docs/assets/screenshots/inspector.jpg)
 
-## Review and publish
+### Browse your existing collection without moving it
 
-1. Scan Incoming, check grouping, or manually group loose tracks.
-2. Resolve Needs review items: select a matching mode or exact release ID.
-3. Inspect Curated output: edition, titles, numbering, artist/year, audio and artwork.
-4. Correct genres/category tags or explicitly allow/create them in the label section.
-5. Review and approve the exact audio revision to publish it.
+Select files or folders from a read-only host directory. Copies enter Incoming as a completed batch; your source stays untouched. **You choose when to Scan.**
 
-Usable embedded covers are kept if every track has one. Fetched replacements are
-embedded in applicable output tracks. Retry and replace artwork is available.
-Mobile screens use labelled cards, touch-sized controls, responsive dialogs, and
-an inspector player. Phones need the LAN address, not localhost.
+![Read-only music drawer with selectable folders](docs/assets/screenshots/music-drawer.jpg)
 
-Settings includes staging file count/size and permanent purge with checkbox confirmation.
-Purge coordinates with active staging work. It deletes all staging originals, unpublished
-and abandoned batches. Published music and state archives are untouched.
-Do not purge unless you intend to discard everything in staging.
+### No catalogue match? Curate it yourself
 
-## Authentication and configuration
+Useful for soundtracks, regional releases and hard-to-match editions: enter the metadata, paste or choose a cover, and prepare a Curated copy. Manual mode does not certify completeness or bypass approval.
 
-### Manual curation and processing progress
+![Manual curation with per-track metadata and pasted-artwork controls](docs/assets/screenshots/manual-curation.jpg)
 
-Choose Manual metadata when grouping, or inspect an unpublished release and select
-Manual metadata & artwork. Enter album artist/title/year and each track's title,
-artist, disc/track position, genres and category tags. Paste an image into the
-artwork box or choose an image file (10 MiB / 20 megapixel limit). Replacement
-covers are normalized and embedded in every output track; without a replacement,
-valid original covers are retained. Manual curation bypasses catalogue matching,
-scrubs working-copy tags, and prepares a new Curated revision. It does not certify
-album completeness or authorize publication. Unknown labels still block approval.
+<details>
+<summary><strong>More of the desk: incoming files and mobile review</strong></summary>
 
-Overview and the inspector show current processing stage, elapsed time and track
-counts where available. MusicBrainz/Beets matching uses an indeterminate progress
-bar rather than a guessed percentage. Active jobs refresh every two seconds.
+![Incoming track inventory, grouping and browser uploads](docs/assets/screenshots/incoming.jpg)
 
-Before automatic matching, distributor website watermarks (including songs.pk,
-MP3Khan.com and djpunjab.com) are removed from title/album/artist fields in working
-copies only. Each change is logged. Originals and match thresholds are unchanged.
+<p align="center"><img src="docs/assets/screenshots/mobile-review.jpg" alt="Phone-sized release review with artwork and editable tags" width="340"></p>
 
-Token authentication is enabled by default. The raw token is not stored in browser
-storage. Sign-in creates an HttpOnly SameSite cookie valid for 12 hours; hashed
-session identifiers persist in state across container restarts. Token rotation
-revokes sessions. API mutations verify session, CSRF token and origin.
+</details>
 
-CURATOR_AUTH_REQUIRED=0 is supported but not recommended. Use a trusted LAN or HTTPS.
-Docker directory plans in Settings are advisory, not automatic remount operations.
-Library paths cannot be changed through publishing actions.
+## The approval gate is the feature
 
-## Restricted remote deployment
+```mermaid
+flowchart LR
+    S["Existing collection / browser upload"] --> I["Incoming copies"]
+    I -->|"You click Scan"| C["Match or manually curate"]
+    C -->|"Ambiguous / incomplete"| R["Needs review"]
+    R --> C
+    C --> Q["Curated · waiting for you"]
+    Q -->|"Review exact revision + approve"| P["Isolated publisher"]
+    P --> L["Rhythm Attic"]
+    classDef mint fill:#19392d,stroke:#79dfb0,color:#e7edf3
+    class Q,P,L mint
+```
 
-The optional helper accepts source-only updates through a dedicated SSH key.
-Run sudo sh bin/install-deploy-access.sh <public-key-file> <absolute-project-directory>
-once as administrator. Keep the private key on the client, never in this repository.
+Nothing publishes just because a match is high-confidence. The worker has **no final-library mount**; the web app reads the library; only the isolated publisher has a writable library mount.
 
-The key permits no interactive shell or forwarding. The account has no Docker group
-membership; sudo allows only the root-owned helper with deploy or status. Uploaded
-regular Python/JS/CSS/HTML sources are path/size validated. Only the fixed three-service
-stack is rebuilt. Dockerfile, dependencies, Compose, config and .env remain protected
-administrator snapshots under /etc/rhythm-deploy.
+Final output contains audio files only:
 
-Client: python bin/deploy.py --key <private-key-path> --host rhythm-deploy@<server>
-Add --status for read-only container status. Backups and image tags are retained
-for administrator cleanup; failed startup attempts rollback. Running containers
-are not a substitute for functional verification.
+```text
+rhythm-attic/
+└── Album Artist/
+    └── Album Title (2024)/
+        ├── 01 - First Track.flac
+        └── 02 - Second Track.flac
+```
 
-Publisher updates can influence music inside their existing mounts. This is scoped
-deployment authority, not protection against malicious application code.
-Re-running the installer refreshes protected deployment configuration snapshots.
+Artwork is embedded. Non-audio files and tracks shorter than 10 seconds are excluded from output, not silently deleted from the originals. Unsafe filename characters are sanitized. Genres and category tags must be explicitly allowed before publication.
 
-For an existing restricted deployment, an administrator can add the music drawer:
-`sudo python3 app/configure_source.py --project <absolute-project-directory> --source /srv/media/music`
-This backs up and updates only the protected web-service source mount. Source
-permissions are unchanged. Re-deploy normally afterward to recreate containers.
-The deployment key cannot execute this administrator command.
+## Get started
 
-Revoke new SSH connections without stopping the app:
-sudo mv /var/lib/rhythm-deploy-user/.ssh/authorized_keys /var/lib/rhythm-deploy-user/.ssh/authorized_keys.disabled
-Remove /etc/sudoers.d/rhythm-deploy when retiring the account. Revocation does not
-undo deployed code or terminate an already-running deployment.
+**Requirements:** Linux host, Docker Compose, Python 3 for bootstrap, and ACL tools. Check service UID/GID conflicts before provisioning.
 
-## Development and repository hygiene
+```bash
+git clone https://github.com/rajatsnvsingh/RhythmDesk.git
+cd RhythmDesk
+cp .env.example .env
+```
 
-Python 3.12+, requirements.txt, and ffmpeg. Run:
+1. Set a private random token, staging/state/library paths and the read-only `SOURCE_PATH` in `.env`.
+2. Create a new empty library directory if starting fresh; run the [scoped bootstrap](docs/deployment.md#docker-setup).
+3. Grant source read/traverse access to the UI identity only where needed.
+4. Start the stack:
+
+   ```bash
+   docker compose up --build -d
+   docker compose ps
+   ```
+
+The supplied Compose file binds to **localhost:8765**. Use an SSH tunnel, or deliberately configure a trusted LAN binding and allowed hosts. Keep plain HTTP off the public Internet. Phones must use the server's LAN address, not the phone's localhost.
+
+Then: **import → Scan → inspect → correct labels → approve**. See the [illustrated user guide](docs/user-guide.md) for each screen, matching modes and recovery steps.
+
+## Documentation
+
+| Document | What you will find |
+| :--- | :--- |
+| [User guide](docs/user-guide.md) | Illustrated everyday workflow, artwork, matching modes, labels, mobile use and troubleshooting |
+| [Deployment & operations](docs/deployment.md) | Docker, identities, mounts, authentication, restricted updates, backups and purge precautions |
+| [Architecture](docs/architecture.md) | Trust boundaries, component responsibilities, state transitions and publication sequence diagrams |
+| [Technical specification](docs/technical-spec.md) | Storage contracts, configuration, API map, validation, limits and known constraints |
+| [Screenshot notes](docs/screenshots.md) | Demo provenance and how to refresh the screenshots |
+
+## Development
+
+Use Python 3.12+, install `requirements.txt`, and make `ffmpeg`/`ffprobe` available:
+
+```bash
+python -m pip install -r requirements.txt
 python -m unittest discover -s tests
-GitHub Actions runs tests on Linux. Demo data is available through app/demo.py;
-never use actual music as test fixtures.
+```
 
-The repository excludes .env, keys, local runtimes/data, databases, logs, and
-deployment backups. Review staged content before each push. Never put credentials
-in repository URLs or commit messages. No license is selected yet; decide on
-licensing before making this repository public.
+The test suite uses tiny synthetic audio fixtures. GitHub Actions runs the suite on Linux. Keys, `.env`, local runtimes, audio, databases, logs and deployment backups must stay out of commits.
+
+**Current scope:** a single-user curation desk, not a music acquisition client, multi-user platform or automatic library replacer. No license has been selected yet; choose one before a public release.
