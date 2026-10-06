@@ -15,7 +15,7 @@ const inspector=$('review-dialog');
 function outside(e){const r=inspector.getBoundingClientRect();return e.target===inspector&&(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom);}
 inspector.addEventListener('pointerdown',e=>{backdropDown=outside(e);});inspector.addEventListener('click',e=>{if(backdropDown&&outside(e))guardDraft(()=>inspector.close());backdropDown=false;});
 inspector.addEventListener('cancel',e=>{e.preventDefault();guardDraft(()=>inspector.close());});
-inspector.addEventListener('close',()=>{closePlayer('modal-');editor=null;detail=null;});
+inspector.addEventListener('close',()=>{++inspectSequence;closePlayer('modal-');editor=null;detail=null;});
 async function inspect(id,force=false){
   if(editor&&editor.id!==id&&!force){guardDraft(()=>inspect(id,true));return;}
   if(editor&&editor.id===id&&draftDirty()&&!force)return;
@@ -90,6 +90,12 @@ function localBlockers(){
 }
 function updateEditorState(){
   if(!editor||!detail)return;
+  // A save snapshots the draft. Lock controls until it finishes rather than
+  // accepting keystrokes that the input handler must ignore while busy.
+  for(const control of $('review-body').querySelectorAll('input,select,button')){
+    if(editor.busy){if(!control.hasAttribute('data-busy-disabled'))control.dataset.busyDisabled=String(control.disabled);control.disabled=true;}
+    else if(control.hasAttribute('data-busy-disabled')){control.disabled=control.dataset.busyDisabled==='true';delete control.dataset.busyDisabled;}
+  }
   const blockers=localBlockers(),canPublish=!blockers.length&&!!detail.review&&detail.job.status==='Curated';
   $('readiness').innerHTML=detail.job.status==='Approved'?'<strong>Published revision · read-only history</strong><p>This release was explicitly approved. This view cannot edit or republish the library. Labels are compared with the current policy for reference.</p>':`<strong>${draftDirty()?'Unsaved draft':detail.readiness.can_review?'Prepared for your review':'Not ready for publication'}</strong>${blockers.length?`<ul>${blockers.map(b=>`<li>${esc(b.message)}</li>`).join('')}</ul>`:'<p>All preparation checks pass. You still need to verify metadata, edition and artwork, then explicitly approve.</p>'}`;
   const oldFocus=document.activeElement?.id;
