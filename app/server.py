@@ -464,7 +464,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(payload)
                 return
-            if url.path in ('/', '/app.js', '/style.css', '/settings.js', '/settings.css', '/review-tools.js', '/drawer.js', '/mobile.css', '/model.js'):
+            if url.path in ('/', '/app.js', '/style.css', '/settings.js', '/settings.css', '/review-tools.js', '/drawer.js', '/mobile.css', '/archive.css', '/model.js'):
                 file = STATIC / ('index.html' if url.path == '/' else url.path[1:])
                 self.send_file(file)
                 return

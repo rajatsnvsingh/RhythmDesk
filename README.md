@@ -15,7 +15,7 @@
 
 Rhythm Desk pairs **Beets, MusicBrainz and ffprobe** with a compact, data-rich web app. Loose songs, nested folders and mixed collections all enter the same review workflow. Acquisition stays separate: bring your existing files, or use your own acquisition tools.
 
-Home puts decisions beside operational counts and library statistics. The unified Review desk keeps metadata, quality, artwork and labels visible, with compact phone rows and always-reachable Save / Review publication actions. One draft-aware editor handles corrections, manual metadata, searchable labels, selected-track batch edits and cover replacement. [UX overhaul and verification](docs/ux-overhaul.md).
+Home puts decisions beside operational counts and library statistics. A warm, catalogue-inspired workbench gives release artwork and names room to breathe without burying the data. The unified Review desk keeps metadata, quality, artwork and labels visible, with compact phone rows and always-reachable Save / Review publication actions. One draft-aware editor handles corrections, manual metadata, searchable labels, selected-track batch edits and cover replacement. [UX overhaul and verification](docs/ux-overhaul.md).
 
 ![Rhythm Desk overview with pipeline counts, processing progress and library statistics](docs/assets/screenshots/overview.jpg)
 

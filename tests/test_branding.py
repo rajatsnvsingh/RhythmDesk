@@ -84,3 +84,27 @@ class BrandingTests(unittest.TestCase):
         self.assertNotIn('more-dialog', html)
         for name in ('nav-incoming', 'nav-jobs'):
             self.assertIn(f'id="{name}" class="nav-count" aria-hidden="true" hidden>', html)
+
+    def test_archive_styles_are_public_but_do_not_grant_a_session(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = Settings(root)
+            settings.initialize()
+            server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+            server.desk = Desk(settings, 'test-token-for-protected-ui')
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base = f'http://127.0.0.1:{server.server_port}'
+                with urllib.request.urlopen(base + '/archive.css') as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertIn('text/css', response.headers['Content-Type'])
+                    self.assertIn(b'--bg: #181a17', response.read())
+                    self.assertIsNone(response.headers.get('Set-Cookie'))
+                    self.assertIn("default-src 'self'", response.headers['Content-Security-Policy'])
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    urllib.request.urlopen(base + '/api/snapshot')
+                self.assertEqual(error.exception.code, 401)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)

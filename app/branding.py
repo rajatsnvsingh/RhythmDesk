@@ -47,7 +47,7 @@ def asset(path):
         return SVG, 'image/svg+xml'
     if path == '/manifest.webmanifest':
         manifest = dict(name='Rhythm Desk', short_name='Rhythm Desk', start_url='/', scope='/',
-                        display='standalone', background_color='#10161a', theme_color='#10161a',
+                        display='standalone', background_color='#181a17', theme_color='#181a17',
                         description='Your music, deliberately curated.',
                         icons=[dict(src=f'/icon-{size}.png', sizes=f'{size}x{size}', type='image/png', purpose='any')
                                for size in (192, 512)])

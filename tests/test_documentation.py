@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 import unittest
 import xml.etree.ElementTree as ET
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +45,9 @@ class DocumentationTests(unittest.TestCase):
                 data = screenshot.read_bytes()
                 self.assertTrue(data.startswith(b"\xff\xd8"))
                 self.assertTrue(data.endswith(b"\xff\xd9"))
+                # A valid JPEG can still be an empty capture between paints.
+                with Image.open(screenshot) as image:
+                    self.assertGreater(max(high - low for low, high in image.convert('RGB').getextrema()), 50)
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ async function inspect(id,force=false){
     editor={id,draft:RhythmModel.draft(d,manual),baseline:null,manual,editing:manual,rows:new Set(),selected:new Set(),busy:false,stale:false};
     editor.baseline=RhythmModel.copy(editor.draft);
     if(old?.id===id){editor.editing=old.editing;editor.rows=old.rows;editor.selected=old.selected;}
-    renderInspector();$('review-body').scrollTop=scroll;if(!inspector.open)inspector.showModal();return true;
+    renderInspector();if(!inspector.open)inspector.showModal();$('review-body').scrollTop=scroll;return true;
   }catch(e){feedback(e.message);return false;}
 }
 async function pollInspector(){
@@ -61,7 +61,7 @@ function renderInspector(){
   const first=d.review?.tracks.find(t=>t.artwork),source=d.sources.find(t=>t.artwork);
   const art=first?mediaUrl(j.id,first.file,true):source?'/api/media?'+new URLSearchParams({track:source.id,art:1}):'';
   $('review-body').classList.toggle('editing',editor.editing);
-  $('review-body').innerHTML=`<div class="review-top">${art?`<img class="cover" src="${esc(art)}" alt="${esc(j.album)} artwork">`:'<div class="cover album-square">♫</div>'}<div class="review-meta"><p><strong id="draft-artist">${esc(editor.draft.artist)}</strong> · <span id="draft-year">${editor.draft.year||'Year unknown'}</span> · ${j.track_count} tracks ${badge(j.status)}</p><p>${esc(d.identity.provenance)} · ${esc(j.mode)} · ${esc(d.identity.completeness)}</p>${d.identity.release_ids.map(id=>`<a href="https://musicbrainz.org/release/${id}" target="_blank" rel="noopener noreferrer">Inspect selected MusicBrainz edition ↗</a>`).join(' ')}${d.review?`<p>Destination: <code>rhythm-attic/${esc(d.review.destination)}</code></p>`:''}<p class="muted">Originals retained · No automatic publication</p></div></div>
+  $('review-body').innerHTML=`<div class="review-top">${art?`<img class="cover" src="${esc(art)}" alt="${esc(j.album)} artwork">`:'<div class="cover album-square art-placeholder" role="img" aria-label="No cover preview">NO ART</div>'}<div class="review-meta"><p><strong id="draft-artist">${esc(editor.draft.artist)}</strong> · <span id="draft-year">${editor.draft.year||'Year unknown'}</span> · ${j.track_count} tracks ${badge(j.status)}</p><p>${esc(d.identity.provenance)} · ${esc(j.mode)} · ${esc(d.identity.completeness)}</p>${d.identity.release_ids.map(id=>`<a href="https://musicbrainz.org/release/${id}" target="_blank" rel="noopener noreferrer">Inspect selected MusicBrainz edition ↗</a>`).join(' ')}${d.review?`<p>Destination: <code>rhythm-attic/${esc(d.review.destination)}</code></p>`:''}<p class="muted">Originals retained · No automatic publication</p></div></div>
     <div id="readiness" class="readiness" aria-live="polite"></div>
     ${d.recovery?`<section class="recovery"><h3>${esc(d.recovery.title)}</h3><p>${esc(d.recovery.evidence)}</p><p>${esc(d.recovery.action)}</p></section>`:''}
     ${['Queued','Processing','Editing','Publishing'].includes(j.status)?`<section id="inspector-progress">${processingMarkup(j)}</section>`:''}
@@ -97,9 +97,12 @@ function updateEditorState(){
     else if(control.hasAttribute('data-busy-disabled')){control.disabled=control.dataset.busyDisabled==='true';delete control.dataset.busyDisabled;}
   }
   const blockers=localBlockers(),canPublish=!blockers.length&&!!detail.review&&detail.job.status==='Curated';
+  // Presentation follows the existing blockers; colour never grants authority.
+  $('readiness').dataset.state=detail.job.status==='Approved'?'published':draftDirty()?'draft':blockers.length?'blocked':'ready';
   $('readiness').innerHTML=detail.job.status==='Approved'?'<strong>Published revision · read-only history</strong><p>This release was explicitly approved. This view cannot edit or republish the library. Labels are compared with the current policy for reference.</p>':`<strong>${draftDirty()?'Unsaved draft':detail.readiness.can_review?'Prepared for your review':'Not ready for publication'}</strong>${blockers.length?`<ul>${blockers.map(b=>`<li>${esc(b.message)}</li>`).join('')}</ul>`:'<p>All preparation checks pass. You still need to verify metadata, edition and artwork, then explicitly approve.</p>'}`;
   const oldFocus=document.activeElement?.id;
   $('review-actions').innerHTML=`<span id="draft-state" class="muted">${editor.busy?'Working…':editor.stale?'Draft preserved · server changed':draftDirty()?'Unsaved changes':'Saved / unchanged'}</span>${editable()?`<button id="save-changes" class="${draftDirty()||editor.manual?'primary':'secondary'}" ${editor.busy||editor.stale||(!draftDirty()&&!editor.manual)?'disabled':''}>${editor.manual?'Prepare manual copy':'Save changes'}</button>`:''}${detail.job.status==='Curated'?`<button id="request-approval" class="primary" ${canPublish?'':'disabled'}>Review publication →</button>`:detail.job.status==='Approved'?'<button id="review-next" class="primary">Review next →</button>':''}<button data-close="review-dialog" class="secondary">Close</button>`;
+  $('draft-state').dataset.state=editor.stale?'stale':draftDirty()?'dirty':'saved';
   if(oldFocus&&$(oldFocus))$(oldFocus).focus({preventScroll:true});
   $('album-genres').innerHTML=chips(RhythmModel.labels(editor.draft.tracks.flatMap(t=>t.genres)));$('album-tags').innerHTML=chips(RhythmModel.labels(editor.draft.tracks.flatMap(t=>t.tags)));
 }

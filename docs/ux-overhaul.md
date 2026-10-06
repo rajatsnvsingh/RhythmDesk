@@ -19,6 +19,14 @@ The eight work packages from the usability review are implemented together. The 
 
 On desktop, Home places decisions beside counts and library context. On phones, decision actions come first. Track titles, artists, positions, length/encoding, artwork presence, genres and category tags remain visible without opening each track. Edit tools appear on demand; original evidence and raw logs are secondary disclosures.
 
+## Archive identity
+
+The visual direction is a hi-fi archive with record-shop warmth: charcoal and ivory, restrained sage, editorial release headings and monospaced catalogue details. The hand-built record monogram remains the maker's mark. Home separates the working desk from the permanent collection rather than repeating the same rounded card everywhere. Missing artwork is an explicitly labelled **NO ART** sleeve, not an invented cover.
+
+All useful metadata stays visible. Amber marks blockers, unknown labels and unsaved drafts; a textual checklist explains the state. Literal action names remain unchanged. There are no external fonts, decorative waveforms, gradients, artificial textures or animated records. Phone rows keep visible track evidence and the fixed Save / Review footer.
+
+`app/static/archive.css` is the documented presentation layer, loaded after structural/editor and mobile styles. It must not change hidden-field behavior, draft authority or server policies. The static route serves it without granting a session. Palette tests check normal-text contrast of the main text and semantic tokens against both core surfaces; these are not a claim of a full accessibility audit.
+
 ## Unchanged safety boundaries
 
 - No scan starts merely because files appeared. No high-confidence match publishes automatically.
@@ -36,6 +44,8 @@ Backend tests cover artwork replacement on every output track with unchanged ori
 Browser walkthroughs used only synthetic music. They checked label creation alongside dirty metadata; chip addition/removal and visible mapping errors; Save creating a new revision; dirty close/Escape; View all Decisions; conditional manual grouping; copy-only source import with Scan offered but not started; sorting/page selection; browser Back; and in-modal playback with advancing time and no decoder error. Real library publication and purge were not used as UI tests.
 
 Checked phone widths 320, 390 and 430, tablet 768, and desktop layouts. Incoming, Review, Settings and Library reflow without page-level horizontal overflow in the checked states. Real 20- and 50-track synthetic releases include long titles and regional characters. Primary review actions stay at the bottom of the viewport while tracks scroll.
+
+The archive-style follow-up passed 60 Python and 8 editor tests, including the new style-route/session and palette checks. Browser verification covered 320/390/430 phones, a 768-wide tablet and a 1440-wide desktop, plus manual fields, a dirty long regional-title draft, guarded close, missing-art sleeves, and in-modal audio advancing to completion. It also corrected inspector scroll restoration: a new release opens at its header after the dialog becomes visible; same-release refresh retains its position. Documentation screenshots were refreshed using only the isolated synthetic workspace. Physical-phone keyboard and safe-area acceptance still requires the checklist below.
 
 ## Physical-phone acceptance check
 
