@@ -179,7 +179,7 @@ def artwork_config(settings, folder, work, force=False):
     # Pinned base configs may still reference the retired media/state bind.
     # Resolve importer logs against the live state volume before invoking Beets.
     logs = settings.state / 'logs'
-    logs.mkdir(exist_ok=True)
+    logs.mkdir(parents=True, exist_ok=True)
     config.setdefault('import', {})['log'] = str(logs / 'beets-import.log')
     config.setdefault('fetchart', {})['auto'] = not complete
     config.setdefault('embedart', {}).update(auto=not complete, ifempty=False)
@@ -203,6 +203,8 @@ def process_job(settings, job_id):
         force_artwork = bool(flag and flag['value'] == 'true')
         manual_row=db.execute('SELECT value FROM meta WHERE key=?',('manual:'+job_id,)).fetchone()
         manual_payload=json.loads(manual_row['value']) if manual_row else None
+        selected_row=db.execute('SELECT value FROM meta WHERE key=?',('candidate:'+job_id,)).fetchone()
+        selected_candidate=selected_row['value'] if selected_row else ''
     update(settings,job_id,'Preparing','Checking originals and copying tracks',0,len(rows),started=time.time())
     folder = safe_child(settings.review, job_id)
     originals = folder / 'originals'
@@ -224,6 +226,9 @@ def process_job(settings, job_id):
         database = folder / 'beets.db'
         if database.exists():
             database.unlink()
+        candidates_path=folder/'CANDIDATES.json'
+        if candidates_path.exists():
+            candidates_path.unlink()
         for index, row in enumerate(rows, 1):
             source = safe_child(settings.incoming, row['path'])
             if sha256(source) != row['sha256']:
@@ -269,6 +274,16 @@ def process_job(settings, job_id):
         else:
             executable = os.environ.get('BEET', 'beet')
             effective_config, complete_art = artwork_config(settings, folder, work, force_artwork)
+            config=json.loads(effective_config.read_text(encoding='utf-8'))
+            plugins=config.get('plugins', [])
+            if isinstance(plugins,str):plugins=plugins.split()
+            config['plugins']=list(dict.fromkeys([*plugins,'rhythm_candidates']))
+            config['pluginpath']=[str(Path(__file__).resolve().parent)]
+            config['rhythm_candidates']={'output':str(folder/'CANDIDATES.json'),
+                                        'selected':selected_candidate}
+            atomic_json(effective_config,config)
+            if selected_candidate and (job['mode']!='album' or selected_candidate!=job['release_id']):
+                raise ValueError('Candidate selection must identify the chosen complete album')
             event(settings, 'All source tracks have artwork: keeping embedded covers; fetching disabled' if complete_art
                   else 'Some source tracks lack artwork: fetched cover will update every track in the release', job_id)
             command = [executable, '-vv', '-c', str(effective_config), '-l', str(folder / 'beets.db'),
@@ -314,6 +329,9 @@ def process_job(settings, job_id):
             for track in record['tracks']:
                 track['source_id']=identities[(track['disc'],track['track'])]
         record['mode'] = job['mode']
+        if selected_candidate:
+            record['selected_candidate']=selected_candidate
+            record['match_selection']='User-selected catalogue edition; publication still requires approval'
         from common import revision
         record['revision'] = revision(record)
         from taxonomy import unknown

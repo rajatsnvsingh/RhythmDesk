@@ -204,12 +204,14 @@ class Desk:
         from ux import readiness, recovery, release_identity
         found = unknown(self.settings, review['tracks']) if review else {}
         exists = bool(job['destination'] and (self.settings.library / job['destination']).exists())
+        from rhythm_candidates import read_candidates
         return {'job': job, 'review': review, 'sources': sources, 'log': log_text,
+                'candidates': read_candidates(folder, log_text),
                 'unknown_labels': found, 'taxonomy': __import__('taxonomy').policy(self.settings),
                 'readiness': readiness(job, review, found, exists, not self.demo and Path(self.settings.socket).exists(), self.demo),
                 'recovery': recovery(job), 'identity': release_identity(job, review), 'destination_exists': exists}
 
-    def retry(self, job_id, release_id, force_artwork=False, mode=None):
+    def retry(self, job_id, release_id, force_artwork=False, mode=None, selected_candidate=''):
         import uuid
         if type(force_artwork) is not bool:
             raise ValueError('Force artwork must be a boolean')
@@ -221,6 +223,19 @@ class Desk:
             if not job or job['status'] != 'Needs review':
                 raise ValueError('Only Needs review jobs can be retried')
             mode = mode or job['mode']
+            if selected_candidate:
+                if mode!='album' or selected_candidate!=release_id:
+                    raise ValueError('Choose a complete-album candidate')
+                from rhythm_candidates import read_candidates
+                folder=self.job_folder(dict(job))
+                log=folder/'BEETS.log'
+                candidates=read_candidates(folder,log.read_text(encoding='utf-8') if log.exists() else '')
+                candidate=next((c for c in candidates if c['release_id']==selected_candidate),None)
+                if not candidate or candidate.get('missing') or candidate.get('unmatched'):
+                    raise ValueError('Candidate unavailable or incomplete; refresh the inspector')
+            db.execute('DELETE FROM meta WHERE key=?',('candidate:'+job_id,))
+            if selected_candidate:
+                db.execute('INSERT INTO meta VALUES(?,?)',('candidate:'+job_id,selected_candidate))
             if mode not in ('album','single','partial') or (mode=='single' and job['track_count']!=1):
                 raise ValueError('Single mode requires one track; choose album or partial')
             db.execute('UPDATE jobs SET mode=? WHERE id=?',(mode,job_id))
@@ -647,7 +662,7 @@ class Handler(BaseHTTPRequestHandler):
                     queue(self.desk.settings,job_id,data)
                     self.json({'ok':True})
                 elif action == 'retry':
-                    self.desk.retry(job_id, data.get('release_id', ''), data.get('force_artwork', False),data.get('mode'))
+                    self.desk.retry(job_id, data.get('release_id', ''), data.get('force_artwork', False),data.get('mode'),data.get('selected_candidate',''))
                     self.json({'ok': True})
                 elif action == 'ungroup':
                     self.desk.ungroup(job_id)

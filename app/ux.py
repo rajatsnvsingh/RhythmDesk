@@ -57,7 +57,8 @@ def release_identity(job, record):
             ids.append(str(uuid.UUID(value)))
         except (ValueError, TypeError, AttributeError):
             continue
-    return dict(provenance='User supplied' if job.get('mode') == 'manual' else 'Catalogue matching',
+    return dict(provenance='User supplied' if job.get('mode') == 'manual' else
+                'User-selected catalogue edition' if (record or {}).get('selected_candidate') else 'Catalogue matching',
                 release_ids=ids, completeness='Complete-release validation' if job.get('mode') == 'album'
                 else 'Completeness not certified')
 

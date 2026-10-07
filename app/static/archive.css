@@ -219,3 +219,9 @@ dialog::backdrop { background: #0d100bdd; backdrop-filter: none; }
   .more-links button { padding: 16px 0; }
   .more-links strong { font-size: 23px; }
 }
+.candidate-picker { margin: 1rem 0; }
+.candidate-card { border: 1px solid var(--line, #55594c); padding: 1rem; margin: .75rem 0; overflow-wrap: anywhere; }
+.candidate-card p { margin: .5rem 0; }
+.candidate-card .check-label { display: flex; align-items: center; gap: .5rem; margin: .75rem 0; }
+.candidate-card details { margin: .75rem 0; }
+.candidate-card ol { padding-left: 1.5rem; }

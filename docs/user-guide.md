@@ -71,6 +71,8 @@ Website addresses such as `songs.pk`, `MP3Khan.com` and `djpunjab.com` are clean
 
 Open **Inspect** and read the visible failure explanation and recovery options. Confirm the source tracks really belong together. You can retry with a different mode or an exact MusicBrainz release UUID when you know the edition; an external MusicBrainz search link is provided. Retry stays in the inspector and displays queued/processing state. Raw logs remain optional technical evidence; candidate counts are never shown as matched-track counts.
 
+For complete albums, **Review catalogue candidates** displays the editions Beets considered, their match distances (lower is closer), edition details and catalogue track lists. Inspect the linked MusicBrainz edition, check the confirmation box, then choose **Use this edition**. This explicitly permits preparing that candidate even when it missed the automatic confidence threshold; it does not approve publication. Missing or unmatched tracks still block complete-album preparation. Review the resulting Curated tags and artwork, resolve any unknown labels, and approve publication separately. Older jobs can show IDs and distances from their saved log; retry matching to collect richer edition details.
+
 **Retry & fetch new artwork** asks for a downloaded cover even if existing covers are present. Automatic matching must still succeed; this is not a force-import button. A failed network lookup, missing recording match or ambiguous release edition needs resolution, not a weaker approval gate.
 
 ## 6. Curate manually
