@@ -75,6 +75,18 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(values['embedart']['auto'])
         self.assertFalse(values['embedart']['ifempty'])
 
+    def test_pinned_import_log_is_overridden_by_live_state(self):
+        from worker import artwork_config
+        self.settings.config.write_text('import:\n  log: /srv/media/music/curator-state/logs/beets-import.log\n  quiet_fallback: skip\nmatch:\n  strong_rec_thresh: 0.03\n', encoding='utf-8')
+        work = Path(self.temp.name) / 'log-input'
+        work.mkdir()
+        config, _ = artwork_config(self.settings, Path(self.temp.name), work)
+        values = json.loads(config.read_text())
+        self.assertEqual(values['import']['log'], str(self.settings.state / 'logs/beets-import.log'))
+        self.assertTrue((self.settings.state / 'logs').is_dir())
+        self.assertEqual(values['import']['quiet_fallback'], 'skip')
+        self.assertEqual(values['match']['strong_rec_thresh'], 0.03)
+
     def test_source_art_visible_without_curated_output(self):
         track(self.settings.incoming / 'source.flac', art=True)
         scan(self.settings)

@@ -1,5 +1,5 @@
 directory: /srv/media/music/staging/Curated
-library: /srv/media/music/curator-state/musiclibrary.db
+library: /var/lib/rhythm-desk/musiclibrary.db
 
 import:
     copy: yes
@@ -8,7 +8,7 @@ import:
     quiet: yes
     quiet_fallback: skip
     timid: no
-    log: /srv/media/music/curator-state/logs/beets-import.log
+    log: /var/lib/rhythm-desk/logs/beets-import.log
     resume: no
     duplicate_action: skip
     bell: no

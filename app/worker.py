@@ -176,6 +176,11 @@ def artwork_config(settings, folder, work, force=False):
     from artwork import usable_image
     complete = not force and bool(files) and all(usable_image(MediaFile(p)) for p in files)
     config = yaml.safe_load(settings.config.read_text(encoding='utf-8')) or {}
+    # Pinned base configs may still reference the retired media/state bind.
+    # Resolve importer logs against the live state volume before invoking Beets.
+    logs = settings.state / 'logs'
+    logs.mkdir(exist_ok=True)
+    config.setdefault('import', {})['log'] = str(logs / 'beets-import.log')
     config.setdefault('fetchart', {})['auto'] = not complete
     config.setdefault('embedart', {}).update(auto=not complete, ifempty=False)
     # JSON is valid YAML and preserves the base matching/security policy.
