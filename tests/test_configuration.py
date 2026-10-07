@@ -1,4 +1,6 @@
 import sys
+import os
+import stat
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,6 +12,23 @@ from worker import tick
 
 
 class ConfigurationTests(unittest.TestCase):
+    @unittest.skipIf(os.name == 'nt', 'POSIX group permission bits')
+    def test_database_and_wal_are_group_writable(self):
+        from common import connect
+        self.assertEqual(stat.S_IMODE(self.settings.db.stat().st_mode), 0o660)
+        with connect(self.settings) as db:
+            db.execute("INSERT OR REPLACE INTO meta VALUES('permission_test','ok')")
+            for suffix in ('-wal', '-shm'):
+                mode = stat.S_IMODE(Path(str(self.settings.db) + suffix).stat().st_mode)
+                self.assertEqual(mode, 0o660)
+
+    def test_connection_precreation_is_exclusive_and_group_writable(self):
+        from common import connect
+        with patch('common.os.open', wraps=os.open) as opened:
+            with connect(self.settings) as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM jobs').fetchone()[0], 0)
+            opened.assert_called_once_with(self.settings.db, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o660)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.settings = Settings(self.temp.name)

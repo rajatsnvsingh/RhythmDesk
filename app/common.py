@@ -54,6 +54,15 @@ class Settings:
 
 @contextlib.contextmanager
 def connect(settings):
+    # SQLite creates databases with mode 0644, regardless of a group-friendly
+    # umask. Pre-create with shared-group write access; WAL/SHM inherit DB mode.
+    # Exclusive creation leaves existing databases and their contents untouched.
+    try:
+        descriptor = os.open(settings.db, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o660)
+    except FileExistsError:
+        pass
+    else:
+        os.close(descriptor)
     db = sqlite3.connect(settings.db, timeout=30)
     db.row_factory = sqlite3.Row
     db.execute('PRAGMA journal_mode=WAL')

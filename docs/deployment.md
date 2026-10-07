@@ -51,6 +51,12 @@ bootstrap, and ACL tools (setfacl). The tested Nexus Docker/Compose versions sup
 Default worker/UI/publisher UIDs are 10001/10002/10003 with shared group 10000.
 Check for ID conflicts before bootstrap. Shared SQLite database, WAL and SHM files
 must remain group-writable. Back up state before maintenance.
+The app pre-creates new SQLite databases with mode `0660`: SQLite's default
+`0644` creation mode would remove group write access even with umask `0007`.
+WAL/SHM files inherit the database mode. For an existing affected installation,
+stop all services and have an administrator set only `curator.sqlite3` and its
+existing `-wal`/`-shm` companions to `0660` in the verified state volume before
+restarting. Do not delete WAL/SHM files or recursively loosen volume permissions.
 
 ## Persistent Docker state and disposable test cleanup
 
