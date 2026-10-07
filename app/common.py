@@ -18,7 +18,7 @@ class Settings:
         self.incoming = self.root / 'staging/incoming'
         self.curated = self.root / 'staging/Curated'
         self.review = self.root / 'staging/needs-review'
-        self.state = self.root / 'curator-state'
+        self.state = Path(os.environ.get('CURATOR_STATE_ROOT', str(self.root / 'curator-state'))).resolve()
         self.archive = self.state / 'processed'
         self.library = self.root / 'rhythm-attic'
         self.db = self.state / 'curator.sqlite3'

@@ -23,7 +23,8 @@ Mounts are the library-write boundary. Worker has writable staging/state but no 
 | Setting | Default/example | Contract |
 | --- | --- | --- |
 | `STAGING_PATH` | `/srv/media/music/staging` in `.env.example` | Host writable workspace; Incoming is its `incoming` subdirectory |
-| `STATE_PATH` | `/srv/media/music/curator-state` | Host database, sessions, taxonomy, audit and archives |
+| `STATE_VOLUME` | `rhythm-desk-state` | External Docker volume for database, sessions, taxonomy, audit and archives |
+| `CURATOR_STATE_ROOT` | `/var/lib/rhythm-desk` | Internal state mount, separate from media |
 | `LIBRARY_PATH` | `/srv/media/music/rhythm-attic` | Required final destination; pre-create before bootstrap |
 | `SOURCE_PATH` | `/srv/media/music` | Read-only source mounted at `/mnt/music-source` in web |
 | `UI_PORT` | `8765` | Host port; supplied Compose binds to 127.0.0.1 |

@@ -10,6 +10,7 @@ x-runtime: &runtime
   group_add: ["10000"]
   environment: &environment
     CURATOR_ROOT: /srv/media/music
+    CURATOR_STATE_ROOT: /var/lib/rhythm-desk
     BEETS_CONFIG: /etc/rhythm-curator/config.yaml
     PYTHONUNBUFFERED: "1"
 services:
@@ -23,8 +24,15 @@ services:
       STABLE_SECONDS: "${STABLE_SECONDS:-180}"
     volumes:
       - ${STAGING_PATH:-./data/staging}:/srv/media/music/staging
-      - ${STATE_PATH:-./data/state}:/srv/media/music/curator-state
-      - ${STATE_PATH:-./data/state}/approvals:/srv/media/music/curator-state/approvals:ro
+      - type: volume
+        source: state
+        target: /var/lib/rhythm-desk
+        volume: {nocopy: true}
+      - type: volume
+        source: state
+        target: /var/lib/rhythm-desk/approvals
+        read_only: true
+        volume: {nocopy: true, subpath: approvals}
     # Deliberately no library or publisher-socket mount.
   web:
     <<: *runtime
@@ -40,18 +48,26 @@ services:
       CURATOR_SECURE_COOKIE: ${CURATOR_SECURE_COOKIE:-0}
       CURATOR_PUBLISH_SOCKET: /run/rhythm-publisher/publish.sock
       CURATOR_HOST_STAGING: ${STAGING_PATH:-./data/staging}
-      CURATOR_HOST_STATE: ${STATE_PATH:-./data/state}
+      CURATOR_HOST_STATE: "Docker volume: ${STATE_VOLUME:-rhythm-desk-state}"
+      CURATOR_STATE_VOLUME: ${STATE_VOLUME:-rhythm-desk-state}
       CURATOR_HOST_LIBRARY: ${LIBRARY_PATH:?Set LIBRARY_PATH}
       CURATOR_SOURCE_ROOT: /mnt/music-source
       CURATOR_HOST_SOURCE: ${SOURCE_PATH:-/srv/media/music}
       STABLE_SECONDS: "${STABLE_SECONDS:-180}"
     volumes:
       - ${STAGING_PATH:-./data/staging}:/srv/media/music/staging
-      - ${STATE_PATH:-./data/state}:/srv/media/music/curator-state
+      - type: volume
+        source: state
+        target: /var/lib/rhythm-desk
+        volume: {nocopy: true}
       - ${LIBRARY_PATH:?Set LIBRARY_PATH to the existing Rhythm Attic}:/srv/media/music/rhythm-attic:ro
       - ${SOURCE_PATH:-/srv/media/music}:/mnt/music-source:ro
       - publisher-socket:/run/rhythm-publisher:ro
-      - ${STATE_PATH:-./data/state}/approvals:/srv/media/music/curator-state/approvals:ro
+      - type: volume
+        source: state
+        target: /var/lib/rhythm-desk/approvals
+        read_only: true
+        volume: {nocopy: true, subpath: approvals}
     depends_on: [worker, publisher]
   publisher:
     <<: *runtime
@@ -64,11 +80,21 @@ services:
       CURATOR_PUBLISH_SOCKET: /run/rhythm-publisher/publish.sock
     volumes:
       - ${STAGING_PATH:-./data/staging}/Curated:/srv/media/music/staging/Curated:ro
-      - ${STATE_PATH:-./data/state}/approvals:/srv/media/music/curator-state/approvals
-      - ${STATE_PATH:-./data/state}/taxonomy:/srv/media/music/curator-state/taxonomy:ro
+      - type: volume
+        source: state
+        target: /var/lib/rhythm-desk/approvals
+        volume: {nocopy: true, subpath: approvals}
+      - type: volume
+        source: state
+        target: /var/lib/rhythm-desk/taxonomy
+        read_only: true
+        volume: {nocopy: true, subpath: taxonomy}
       - ${LIBRARY_PATH:?Set LIBRARY_PATH to the existing Rhythm Attic}:/srv/media/music/rhythm-attic
       - publisher-socket:/run/rhythm-publisher
 volumes:
+  state:
+    name: ${STATE_VOLUME:-rhythm-desk-state}
+    external: true
   publisher-socket:
     driver: local
     driver_opts:

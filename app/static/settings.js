@@ -2,11 +2,11 @@
 async function loadSettings(){try{const s=await api('/api/settings');renderSettings(s);await stagingCount();}catch(e){feedback(e.message);}}
 function renderSettings(s){
   $('settings-status').textContent=s.runtime.paused?'Processing paused':'Processing enabled';
-  $('mount-table').innerHTML='<div class="mount-list">'+s.mounts.map(m=>`<div><strong>${esc(m.key)}</strong><code>${esc(m.host)}</code><small>App: ${esc(m.internal)} · ${!m.exists?'Not mounted':!m.readable?'Not readable':m.writable?'Read / write':'Read only'}</small></div>`).join('')+'</div>';
+  $('mount-table').innerHTML='<div class="mount-list">'+s.mounts.map(m=>`<div><strong>${esc(m.volume?'STATE_VOLUME':m.key)}</strong><code>${esc(m.host)}</code><small>App: ${esc(m.internal)} · ${!m.exists?'Not mounted':!m.readable?'Not readable':m.writable?'Read / write':'Read only'}</small></div>`).join('')+'</div>';
   $('intake-paths').innerHTML=`Incoming: <code>${esc(s.incoming)}</code><br>Curated: <code>${esc(s.curated)}</code><br>Needs review: <code>${esc(s.review)}</code><p>The web app reads the library; only the isolated publisher can write after explicit approval.</p>`;
   for(const [key,value] of Object.entries(s.runtime)){const el=$('runtime-form').elements[key];if(typeof value==='boolean')el.checked=value;else el.value=value;}
   const defaults={STAGING_PATH:'/srv/media/music/staging',STATE_PATH:'/srv/media/music/curator-state',LIBRARY_PATH:'/srv/media/music/rhythm-attic'};
-  for(const m of s.mounts)$('paths-form').elements[m.key].value=s.plan?.[m.key]||(m.host.startsWith('/')?m.host:defaults[m.key]);
+  for(const m of s.mounts){const field=$('paths-form').elements[m.key];field.value=m.volume?m.internal:s.plan?.[m.key]||(m.host.startsWith('/')?m.host:defaults[m.key]);field.readOnly=Boolean(m.volume);field.title=m.volume?`Managed by Docker volume ${m.volume}; not a host media folder`:'';}
   $('download-paths').hidden=!s.plan;$('plan-status').textContent=s.plan?'Saved plan · not applied':'No pending plan';
   if(s.source){$('source-mapping').textContent=`${s.source.host} → ${s.source.mount} · ${s.source.available?'Available · read only':'Not mounted or readable'}`;$('source-settings').elements.subdirectory.value=s.source.subdirectory==='.'?'':s.source.subdirectory;}
   for(const key of ['genres','tags'])$('taxonomy-form').elements[key].value=(s.taxonomy?.[key]||[]).join('; ');

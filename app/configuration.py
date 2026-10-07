@@ -30,8 +30,12 @@ def save_runtime(settings, values):
 def save_paths(settings, values):
     if set(values) != {'STAGING_PATH', 'STATE_PATH', 'LIBRARY_PATH'}:
         raise ValueError('Supply staging, state and library directories')
+    if os.environ.get('CURATOR_STATE_VOLUME') and values['STATE_PATH'] != str(settings.state):
+        raise ValueError('Docker-managed state cannot be moved through a directory plan')
     paths = []
-    for value in values.values():
+    for key, value in values.items():
+        if key == 'STATE_PATH' and os.environ.get('CURATOR_STATE_VOLUME'):
+            continue  # This is the immutable container path, not a host bind mapping.
         if not isinstance(value, str) or not value.startswith('/') or any(c in value for c in "\n\r\x00'$:#\\"):
             raise ValueError('Use absolute Linux directory paths without environment or mount syntax')
         path = PurePosixPath(value)
@@ -56,7 +60,8 @@ def describe(settings):
     from source_browser import describe as source_description
     return dict(source=source_description(settings), runtime=runtime(settings), mounts=[dict(key=key, host=os.environ.get(env, str(path)),
                 internal=str(path), exists=path.is_dir(), readable=os.access(path, os.R_OK),
-                writable=os.access(path, os.W_OK)) for key, path, env in mappings],
+                writable=os.access(path, os.W_OK),
+                volume=os.environ.get('CURATOR_STATE_VOLUME', '') if key == 'STATE_PATH' else '') for key, path, env in mappings],
                 plan=json.loads(row['value']) if row else None,
                 incoming=str(settings.incoming), curated=str(settings.curated), review=str(settings.review))
 
@@ -65,5 +70,7 @@ def export_paths(settings):
     plan = describe(settings)['plan']
     if not plan:
         raise ValueError('Save a directory plan first')
-    return '# Pending directory mappings. Stop services and prepare permissions before applying.\n' + ''.join(
-        f"{key}='{value}'\n" for key, value in plan.items())
+    volume = os.environ.get('CURATOR_STATE_VOLUME')
+    return '# Pending directory mappings. Stop services and prepare permissions before applying.\n' + (
+        f"# State remains in its existing Docker volume, not a host folder.\nSTATE_VOLUME='{volume}'\n" if volume else '') + ''.join(
+        f"{key}='{value}'\n" for key, value in plan.items() if key != 'STATE_PATH' or not volume)

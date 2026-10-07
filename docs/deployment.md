@@ -24,13 +24,24 @@ are supported; incomplete albums require appropriate matching mode and explicit 
 
 ## Docker setup
 
-Prerequisites: Docker Compose on Linux, Python 3 for bootstrap, and ACL tools (setfacl).
+Prerequisites: Docker Compose with volume-subpath support on Linux, Python 3 for
+bootstrap, and ACL tools (setfacl). The tested Nexus Docker/Compose versions support it.
 
-1. Copy .env.example to .env. Set a strong random CURATOR_UI_TOKEN, staging/state/library
-   paths, and SOURCE_PATH for the read-only music drawer.
-2. Create the library directory if starting fresh. Run:
-   sudo python3 app/bootstrap.py --staging <path> --state <path> --library <path>
-   to provision restricted service identities and scoped ACLs. Inspect the script first.
+1. Copy .env.example to .env. Set a strong random CURATOR_UI_TOKEN, staging/library
+   paths, STATE_VOLUME, and SOURCE_PATH for the read-only music drawer.
+2. Create the library directory and Docker state volume if starting fresh. Initialize
+   permissions before starting services (inspect the bootstrap script first):
+
+   ```sh
+   docker volume create rhythm-desk-state
+   sudo python3 app/bootstrap.py \
+     --staging /srv/media/music/staging \
+     --state "$(docker volume inspect --format '{{.Mountpoint}}' rhythm-desk-state)" \
+     --library /srv/media/music/rhythm-attic
+   ```
+
+   Use your configured paths and volume name. The state path above is Docker's managed
+   storage, not a media directory. It is used only for initial administrator setup.
 3. Give the UI identity read/traverse permissions on selected drawer directories, not write.
    Docker additionally mounts this source read-only.
 4. Run docker compose up --build -d and verify all three services remain running.
@@ -40,6 +51,57 @@ Prerequisites: Docker Compose on Linux, Python 3 for bootstrap, and ACL tools (s
 Default worker/UI/publisher UIDs are 10001/10002/10003 with shared group 10000.
 Check for ID conflicts before bootstrap. Shared SQLite database, WAL and SHM files
 must remain group-writable. Back up state before maintenance.
+
+## Persistent Docker state and disposable test cleanup
+
+Docker stores app state in the independently managed named volume `rhythm-desk-state`,
+mounted at `/var/lib/rhythm-desk`. This includes the database, sessions, settings,
+taxonomy, receipts, logs and processed archives. Worker/UI share group-writable state;
+their approval subpath is overlaid read-only. Publisher receives only approvals
+(writable) and taxonomy (read-only), never the database or entire volume.
+
+The volume is marked `external: true`, so Compose does not create or remove it—even
+with `docker compose down -v`. Explicitly removing the Docker volume still loses state.
+See [Docker's volume-removal rules](https://docs.docker.com/reference/cli/docker/compose/down/).
+Never store state in a container's disposable writable layer or expose it via SMB.
+`CURATOR_STATE_ROOT` controls the internal path; `STATE_VOLUME` selects the volume.
+Settings identifies this as Docker storage and cannot redirect it through a path plan.
+
+For the existing Nexus **disposable** `curator-test` workspace, the administrator helper
+prepares a fresh volume and `/srv/media/music/staging`, keeping the real library,
+source drawer, token, networking and identities unchanged:
+
+```sh
+cd ~/apps/rhythm-curator
+sudo python3 app/configure_storage.py --project /home/raj/apps/rhythm-curator --apply
+```
+
+Without `--apply`, this only validates the plan. With it, the three services stop,
+new empty storage receives scoped permissions, and the protected Compose snapshot
+is backed up and replaced. Re-deploy through the usual restricted command afterward.
+Fresh storage deliberately does not migrate test settings, labels, sessions or history.
+Sign in with the existing token and configure allow lists again. If an SMB share
+points at the old test staging, update its path to `/srv/media/music/staging/incoming`.
+The helper grants the named staging user (default `raj`) access to the new staging.
+
+After verifying effective mounts and empty workspace/library statistics, remove the
+explicitly disposable test directory using the separate guarded administrator step:
+
+```sh
+sudo python3 app/configure_storage.py --project /home/raj/apps/rhythm-curator --purge-test --apply
+```
+
+This permanently removes only `/srv/media/music/curator-test`. It rejects symlinked
+targets, nested filesystem mounts, unexpected storage mappings, and any container
+directly mounting test data (including stopped containers). Test originals, curated
+copies, state and test albums are deleted with no undo; the real Rhythm Attic and
+new named volume are not touched. The restricted SSH key cannot run either step.
+
+Before backups, stop the three services so the SQLite database/WAL are consistent.
+Export the **whole** volume using an administrator-controlled backup container with
+a read-only mount; include taxonomy, receipts and archives, not just the main database.
+Store the backup outside media shares and verify restoration into a separate empty
+volume before replacing live state. Normal app deployments never reset state volumes.
 
 ## Ingestion and the music drawer
 

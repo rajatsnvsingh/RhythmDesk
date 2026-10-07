@@ -28,7 +28,7 @@ def excluded(settings, path):
             if path == blocked or blocked in path.parents:
                 return True
     # Also protect conventional operational directories when host mappings are unavailable.
-    return any(p in ('staging', 'curator-state', 'rhythm-attic', '.uploads', '.imports') for p in path.relative_to(mount).parts)
+    return any(p in ('staging', 'curator-state', 'curator-test', 'rhythm-attic', '.uploads', '.imports') for p in path.relative_to(mount).parts)
 
 def resolve(settings, relative):
     if not isinstance(relative,str) or '\\' in relative:

@@ -50,3 +50,26 @@ class ConfigurationTests(unittest.TestCase):
         for values in [runtime(self.settings) | {'scan_interval': 0}, runtime(self.settings) | {'paused': 'yes'}, runtime(self.settings) | {'automatic_publish': True}]:
             with self.assertRaises(ValueError):
                 save_runtime(self.settings, values)
+
+    def test_named_state_volume_cannot_be_redirected_from_settings(self):
+        paths = dict(STAGING_PATH='/srv/music/staging', STATE_PATH=str(self.settings.state), LIBRARY_PATH='/srv/music/attic')
+        with patch.dict('os.environ', {'CURATOR_STATE_VOLUME': 'rhythm-desk-state',
+                                     'CURATOR_HOST_STATE': 'Docker volume: rhythm-desk-state'}):
+            save_paths(self.settings, paths)
+            mount = next(m for m in describe(self.settings)['mounts'] if m['key'] == 'STATE_PATH')
+            self.assertEqual(mount['volume'], 'rhythm-desk-state')
+            self.assertIn("STATE_VOLUME='rhythm-desk-state'", export_paths(self.settings))
+            self.assertNotIn('STATE_PATH=', export_paths(self.settings))
+            with self.assertRaises(ValueError):
+                save_paths(self.settings, paths | {'STATE_PATH': '/srv/media/music/state'})
+
+    def test_explicit_state_root_is_outside_media_and_survives_reinitialization(self):
+        state = Path(self.temp.name) / 'docker-state'
+        with patch.dict('os.environ', {'CURATOR_STATE_ROOT': str(state)}):
+            settings = Settings(Path(self.temp.name) / 'media')
+            settings.initialize()
+            save_runtime(settings, dict(stable_seconds=0, scan_interval=30, automatic_grouping=False, paused=True))
+            again = Settings(Path(self.temp.name) / 'media')
+            again.initialize()
+            self.assertEqual(again.state, state.resolve())
+            self.assertTrue(runtime(again)['paused'])

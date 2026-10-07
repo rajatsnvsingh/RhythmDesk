@@ -68,11 +68,23 @@ def library_plan(config, library):
     if any(v.get('target') == LIBRARY_TARGET for v in worker.get('volumes', [])):
         raise ValueError('Worker must not have a library mount')
     roots = []
-    for target in (STAGING_TARGET, STATE_TARGET):
+    for target in (STAGING_TARGET,):
         web_mount, worker_mount = binding(web, target), binding(worker, target)
         if web_mount['source'] != worker_mount['source']:
             raise ValueError('Worker and UI workspace mappings disagree')
         roots.append(host_path(web_mount['source']))
+    state_target = web.get('environment', {}).get('CURATOR_STATE_ROOT', STATE_TARGET)
+    state_mounts = [[v for v in service.get('volumes', []) if v.get('target') == state_target]
+                    for service in (web, worker)]
+    if any(len(m) != 1 for m in state_mounts):
+        raise ValueError('Expected matching state mounts for worker and UI')
+    a, b = (m[0] for m in state_mounts)
+    if a.get('type') != b.get('type') or a.get('source') != b.get('source'):
+        raise ValueError('Worker and UI state mappings disagree')
+    if a['type'] == 'bind':
+        roots.append(host_path(a['source']))
+    elif a['type'] != 'volume' or a.get('volume', {}).get('subpath') or b.get('volume', {}).get('subpath'):
+        raise ValueError('Expected a shared state root, not a redirected state subpath')
     old_library = host_path(old_web['source'])
     if any(overlaps(library, root) for root in roots) or (
             library != old_library and overlaps(library, old_library)):
@@ -184,11 +196,13 @@ def canonical_plan(config):
     return result
 
 
-def install_plan(project, config):
+def install_plan(project, config, *, kind='library', normalizer=canonical_plan, validate_only=False):
     path = CONTROL / 'compose.yaml'
-    backup = path.with_name('compose.before-library-' + str(time.time_ns()) + '.yaml')
-    shutil.copyfile(path, backup)
-    backup.chmod(0o600)
+    backup = None
+    if not validate_only:
+        backup = path.with_name('compose.before-' + kind + '-' + str(time.time_ns()) + '.yaml')
+        shutil.copyfile(path, backup)
+        backup.chmod(0o600)
     # Keep the candidate root-only, validate it before touching the active snapshot.
     descriptor, filename = tempfile.mkstemp(prefix='compose.library.', suffix='.yaml', dir=CONTROL)
     temporary = Path(filename)
@@ -199,9 +213,10 @@ def install_plan(project, config):
             output.flush()
             os.fsync(output.fileno())
         rendered = json.loads(compose(project, temporary, 'config', '--format', 'json').stdout)
-        if canonical_plan(rendered) != canonical_plan(config):
+        if normalizer(rendered) != normalizer(config):
             raise ValueError('Re-rendered plan differs; protected configuration was not replaced')
-        temporary.replace(path)
+        if not validate_only:
+            temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
     return backup

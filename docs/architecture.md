@@ -11,7 +11,7 @@ flowchart TB
     U["User browser / phone"] -->|"HTTP session + CSRF"| W["Web · UID 10002"]
     D["Existing music drawer"] -->|"Read-only bind mount"| W
     W -->|"Copies / uploads"| S["Staging"]
-    W <-->|"Jobs, sessions, progress, events"| DB["Shared SQLite state"]
+    W <-->|"Jobs, sessions, progress, events"| DB["Docker state volume · SQLite"]
     K["Worker · UID 10001"] <-->|"Preparation only"| S
     K <--> DB
     K --> B["Beets + ffprobe + MediaFile"]
@@ -131,12 +131,18 @@ flowchart LR
     Incoming --> Work["staging/needs-review/work.ID"]
     Work --> Curated["staging/Curated/work.ID"]
     Curated -->|"Approved audio only"| Library["rhythm-attic/Artist/Album (Year)"]
-    Curated -->|"Archive work"| Archive["state/processed/work.ID"]
+    Curated -->|"Archive work"| Archive["Docker state volume / processed / work.ID"]
 ```
 
 Staging maintenance coordinates through shared activity/maintenance locks. Purge removes staging content, not the library or processed state archives. This is not a backup system: operators should back up state and music independently.
 
 ## Deployment authority is separate
+
+State is an external Docker named volume mounted at `/var/lib/rhythm-desk`, not a
+host media folder or disposable container layer. Worker/UI share the database;
+their approvals overlay is read-only. Publisher sees only volume subpaths for
+approval receipts and read-only taxonomy. Staging remains a host bind for SMB and
+the library remains a separate protected bind. Back up the whole stopped volume.
 
 The optional restricted SSH account accepts only `deploy` and `status`. A root-owned helper validates a source-only archive and rebuilds a fixed stack using administrator-pinned configuration. It cannot provide an interactive shell, change mounts or upload arbitrary build configuration.
 
