@@ -77,6 +77,8 @@ For complete albums, **Review catalogue candidates** displays the editions Beets
 
 Expand **Matching log & technical record** and click **Copy log** to share the displayed diagnostic log. Terminal colour codes are removed. Copying also supports local HTTP connections; if your browser blocks clipboard access, select and copy the log manually.
 
+To discard one unpublished release, open its inspector and choose **Delete release from staging…**. Review the file count and size, check the permanent-deletion confirmation and click **Delete from staging**. This removes that release’s assigned Incoming originals and its Curated/Needs review working copies, including retained retry copies. Unrelated files (including unassigned covers), published music, state archives and other releases are not deleted. Changed originals, shared files, active jobs and unsafe paths block deletion. The worker is coordinated automatically; no manual stop is needed. This operation cannot be undone.
+
 ## 6. Curate manually
 
 ![Manual metadata and artwork](assets/screenshots/manual-curation.jpg)

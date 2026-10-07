@@ -667,6 +667,12 @@ class Handler(BaseHTTPRequestHandler):
                 elif action == 'ungroup':
                     self.desk.ungroup(job_id)
                     self.json({'ok': True})
+                elif action == 'delete-preview':
+                    from staging import preview_release
+                    self.json(preview_release(self.desk.settings,job_id))
+                elif action == 'delete':
+                    from staging import delete_release
+                    self.json(delete_release(self.desk.settings,job_id,data.get('confirmation'),data.get('token')))
                 elif action == 'edit':
                     self.desk.edit(job_id, data)
                     self.json({'ok': True})
