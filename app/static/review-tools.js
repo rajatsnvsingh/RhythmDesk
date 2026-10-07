@@ -77,7 +77,7 @@ function renderInspector(){
     ${j.status==='Needs review'?`<section class="retry-tools"><h3>Catalogue recovery</h3><label>Retry mode<select id="retry-mode"><option value="album">Complete album</option><option value="single" ${j.track_count===1?'':'disabled'}>Single track</option><option value="partial">Partial album</option></select></label><label>Exact MusicBrainz release UUID (optional)<input id="retry-release" value="${esc(j.release_id||'')}" placeholder="Choose the intended edition on MusicBrainz"></label><a target="_blank" rel="noopener noreferrer" href="https://musicbrainz.org/search?${esc(new URLSearchParams({query:j.artist+' '+j.album,type:'release',method:'indexed'}))}">Search MusicBrainz releases ↗</a><button id="retry-job" class="secondary">Retry matching</button><button id="force-artwork" class="secondary">Retry & fetch new artwork</button><button id="manual-mode" class="secondary">${editor.manual?'Manual editor active':'Use manual metadata instead'}</button><p class="muted">Retry keeps the inspector open. Exact editions still need your verification. Matching thresholds are unchanged.</p></section>`:''}
     ${['Curated','Needs review','Queued'].includes(j.status)?'<button id="ungroup-job" class="quiet">Return tracks to Incoming for regrouping…</button>':''}
     <details><summary>Source tracks & original artwork (${d.sources.length})</summary><div class="source-evidence">${d.sources.map(s=>`<div>${s.artwork?`<img class="queue-cover" src="/api/media?${new URLSearchParams({track:s.id,art:1})}" alt="Source artwork for ${esc(s.title)}" loading="lazy">`:''}<strong>${esc(s.title)}</strong><small>${esc(s.path)} · ${duration(s.seconds)} · ${esc(s.codec)}${s.artwork_invalid?' · Unreadable original artwork (not usable)':''}</small></div>`).join('')}</div></details>
-    <details><summary>Matching log & technical record</summary><p>Job: ${esc(j.id)} · Revision: ${esc(d.review?.revision||'No reviewed revision')}</p>${d.log?`<pre class="review-log">${esc(d.log.replace(/\x1b\[[0-9;]*m/g,''))}</pre>`:'<p>No matching log yet.</p>'}</details>`;
+    <details><summary>Matching log & technical record</summary><div class="editor-heading"><p>Job: ${esc(j.id)} · Revision: ${esc(d.review?.revision||'No reviewed revision')}</p><button id="copy-matching-log" class="secondary" ${d.log?'':'disabled'}>Copy log</button></div>${d.log?`<pre class="review-log">${esc(d.log.replace(/\x1b\[[0-9;]*m/g,''))}</pre>`:'<p>No matching log yet.</p>'}</details>`;
   if($('retry-mode'))$('retry-mode').value=j.mode==='manual'?'album':j.mode;
   renderUnknown();updateEditorState();
 }
@@ -140,6 +140,7 @@ inspector.addEventListener('click',async e=>{
   if(b.id==='save-changes')await saveDraft();
   if(b.id==='manual-mode'&&!editor.manual)guardDraft(()=>{editor.manual=true;editor.editing=true;editor.draft=RhythmModel.draft(detail,true);editor.baseline=RhythmModel.copy(editor.draft);renderInspector();});
   if(['retry-job','force-artwork'].includes(b.id))guardDraft(()=>runJobAction('retry',{mode:$('retry-mode').value,release_id:$('retry-release').value.trim(),force_artwork:b.id==='force-artwork'}));
+  if(b.id==='copy-matching-log'){try{await copyMatchingLog(detail.log.replace(/\x1b\[[0-9;]*m/g,''));toast('Matching log copied.');}catch(err){feedback(err.message);}}
   if(b.dataset.chooseCandidate!==undefined){const index=Number(b.dataset.chooseCandidate),c=detail.candidates[index],checked=inspector.querySelector(`[data-candidate-check="${index}"]`);if(c&&checked?.checked)guardDraft(()=>runJobAction('retry',{mode:'album',release_id:c.release_id,selected_candidate:c.release_id}));}
   if(b.id==='ungroup-job')guardDraft(()=>{const box=$('review-feedback');box.innerHTML='Return every source track to Incoming? Working copies remain retained. <button id="confirm-regroup" class="secondary">Confirm regroup</button>';box.hidden=false;});
   if(b.id==='confirm-regroup')await runJobAction('ungroup',{});
@@ -147,6 +148,15 @@ inspector.addEventListener('click',async e=>{
   if(b.id==='review-next'){const next=snapshot.decisions.find(j=>j.id!==editor.id);if(next)inspect(next.id);else{inspector.close();reviewView('all');}}
 });
 inspector.addEventListener('change',e=>{if(e.target.dataset.candidateCheck!==undefined){inspector.querySelector(`[data-choose-candidate="${e.target.dataset.candidateCheck}"]`).disabled=!e.target.checked;}if(e.target.id==='review-select-all'){editor.selected=e.target.checked?new Set(editor.draft.tracks.map((_,i)=>i)):new Set();inspector.querySelectorAll('[data-review-select]').forEach(n=>n.checked=e.target.checked);$('review-selection').textContent=`${editor.selected.size} selected`;$('batch-controls').hidden=!editor.selected.size;}});
+async function copyMatchingLog(text){
+  if(navigator.clipboard?.writeText){try{await navigator.clipboard.writeText(text);return;}catch(err){/* Local HTTP / denied clipboard: use selection fallback. */}}
+  const previous=document.activeElement,area=document.createElement('textarea');
+  area.value=text;area.readOnly=true;area.style.cssText='position:fixed;left:0;top:0;opacity:0;pointer-events:none';
+  // Keep selection inside the modal's focus boundary.
+  inspector.append(area);
+  try{area.focus();area.select();area.setSelectionRange(0,text.length);if(!document.execCommand('copy'))throw new Error('Clipboard unavailable. Select the log text and copy it manually.');}
+  finally{area.remove();if(previous?.isConnected)previous.focus();}
+}
 async function loadArtwork(file){if(!file)return;try{if(!file.type.startsWith('image/')||file.size>10*1024**2)throw new Error('Choose an image smaller than 10 MiB.');const data=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(new Error('Image could not be read'));r.readAsDataURL(file);});editor.draft.artwork=data.split(',')[1];$('art-preview').src=data;$('art-preview').hidden=false;$('art-clear').disabled=false;$('art-status').textContent='Replacement selected · will update every output track when saved. Server validates the image.';updateEditorState();}catch(e){feedback(e.message);}}
 inspector.addEventListener('change',e=>{if(e.target.id==='art-file')loadArtwork(e.target.files[0]);});
 inspector.addEventListener('paste',e=>{if(!e.target.closest('#art-paste'))return;const image=[...e.clipboardData.items].find(x=>x.type.startsWith('image/'));if(image){e.preventDefault();loadArtwork(image.getAsFile());}else feedback('Copy the image itself, not its URL, or choose an image file.');});

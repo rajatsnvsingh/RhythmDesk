@@ -75,6 +75,8 @@ For complete albums, **Review catalogue candidates** displays the editions Beets
 
 **Retry & fetch new artwork** asks for a downloaded cover even if existing covers are present. Automatic matching must still succeed; this is not a force-import button. A failed network lookup, missing recording match or ambiguous release edition needs resolution, not a weaker approval gate.
 
+Expand **Matching log & technical record** and click **Copy log** to share the displayed diagnostic log. Terminal colour codes are removed. Copying also supports local HTTP connections; if your browser blocks clipboard access, select and copy the log manually.
+
 ## 6. Curate manually
 
 ![Manual metadata and artwork](assets/screenshots/manual-curation.jpg)
