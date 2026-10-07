@@ -9,6 +9,7 @@ sys.path.insert(0,str(Path(__file__).parents[1]/'app'))
 from rhythm_candidates import RhythmCandidatesPlugin, read_candidates
 from common import Settings, connect, atomic_json
 from server import Desk
+from worker import import_arguments
 
 ID='65085f39-6482-44fd-8c34-a266475bedeb'
 
@@ -53,6 +54,21 @@ class CandidatesTests(unittest.TestCase):
         records=read_candidates(self.folder,f'Candidate: Eminem - Recovery ({ID}) from MusicBrainz\nComputing...\nSuccess. Distance: 0.04')
         self.assertEqual(records[0]['release_id'],ID)
         self.assertIsNone(records[0]['missing'])
+
+    def test_exact_release_uses_beets_search_id_not_move_flag(self):
+        from beets.ui.commands.import_ import import_cmd
+        arguments=import_arguments('album',ID,self.folder/'input')
+        options,paths=import_cmd.parser.parse_args(arguments[1:])
+        self.assertEqual(options.search_ids,[ID])
+        self.assertTrue(options.copy)
+        self.assertFalse(options.move)
+        self.assertEqual(paths,[str(self.folder/'input')])
+        self.assertNotIn('-m',arguments)
+        for mode in ('single','partial'):
+            options,paths=import_cmd.parser.parse_args(import_arguments(mode,ID,self.folder/'input')[1:])
+            self.assertTrue(options.singletons)
+            self.assertFalse(options.search_ids)
+            self.assertFalse(options.move)
 
     def test_retry_rejects_unlisted_candidate_and_only_queues(self):
         settings=Settings(self.folder);settings.initialize()

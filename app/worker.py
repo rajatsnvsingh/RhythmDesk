@@ -189,6 +189,15 @@ def artwork_config(settings, folder, work, force=False):
     return target, complete
 
 
+def import_arguments(mode, release_id, work):
+    arguments=['import','-q','--copy','--nomove']
+    if mode in ('single','partial'):
+        arguments.append('-s')
+    elif release_id:
+        arguments.extend(['--search-id',release_id])
+    return [*arguments,'--',str(work)]
+
+
 def process_job(settings, job_id):
     from mediafile import MediaFile
     from processing import update
@@ -287,12 +296,7 @@ def process_job(settings, job_id):
             event(settings, 'All source tracks have artwork: keeping embedded covers; fetching disabled' if complete_art
                   else 'Some source tracks lack artwork: fetched cover will update every track in the release', job_id)
             command = [executable, '-vv', '-c', str(effective_config), '-l', str(folder / 'beets.db'),
-                       '-d', str(audio), 'import', '-q']
-            if job['mode'] in ('single','partial'):
-                command.append('-s')
-            elif job['release_id']:
-                command.extend(['-m', job['release_id']])
-            command.extend(['--', str(work)])
+                       '-d', str(audio), *import_arguments(job['mode'],job['release_id'],work)]
             event(settings, f'Matching {job["artist"]} / {job["album"]}', job_id)
             beets_settings = folder / 'beets-settings';beets_settings.mkdir(exist_ok=True)
             environment = dict(os.environ, BEETSDIR=str(beets_settings),PYTHONUNBUFFERED='1')
