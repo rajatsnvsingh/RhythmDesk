@@ -28,16 +28,19 @@ Prerequisites: Docker Compose with volume-subpath support on Linux, Python 3 for
 bootstrap, and ACL tools (setfacl). Use a Docker/Compose version that supports volume subpaths.
 
 1. Copy .env.example to .env. Set a strong random CURATOR_UI_TOKEN, staging/library
-   paths, STATE_VOLUME, and SOURCE_PATH for the read-only music drawer.
+   paths, ATTIC_PATH, STATE_VOLUME, and SOURCE_PATH for the read-only music drawer.
+   STAGING_PATH must be `<ATTIC_PATH>/staging`; LIBRARY_PATH must be
+   `<ATTIC_PATH>/library`. The parent is dedicated to this app, not a broad media root.
 2. Create the library directory and Docker state volume if starting fresh. Initialize
    permissions before starting services (inspect the bootstrap script first):
 
    ```sh
+   sudo mkdir -p /srv/music/rhythm-attic/library
    docker volume create rhythm-desk-state
    sudo python3 app/bootstrap.py \
-     --staging /srv/rhythm-desk/staging \
+     --staging /srv/music/rhythm-attic/staging \
      --state "$(docker volume inspect --format '{{.Mountpoint}}' rhythm-desk-state)" \
-     --library /srv/music/library
+     --library /srv/music/rhythm-attic/library
    ```
 
    Use your configured paths and volume name. The state path above is Docker's managed
@@ -57,6 +60,51 @@ WAL/SHM files inherit the database mode. For an existing affected installation,
 stop all services and have an administrator set only `curator.sqlite3` and its
 existing `-wal`/`-shm` companions to `0660` in the verified state volume before
 restarting. Do not delete WAL/SHM files or recursively loosen volume permissions.
+
+## Clean three-folder attic
+
+```text
+<ATTIC_PATH>/
+  staging/           Incoming, Curated and needs-review working copies
+  publish-staging/   Publisher-only temporary verified albums
+  library/           Approved Artist/Album (Year)/audio files only
+```
+
+Point Navidrome at **library only**, never at the attic parent. Publisher mounts
+the dedicated parent once, with staging overlaid read-only; library and transfer
+share one mount for atomic, no-replacement rename. The host parent is read/traverse
+only to publisher. Worker gets only staging; web gets staging and read-only library.
+Publish-staging is not part of the user staging-purge operation. Interrupted
+transfer folders require administrator inspection and are never imported or scanned.
+
+### Existing flat-library migration
+
+The administrator helper supports only the previous known production layout:
+flat `/srv/media/music/rhythm-attic`, `/srv/media/music/staging`, and existing named
+Docker state. It relocates artist directories into `rhythm-attic/library`, moves
+the entire staging directory into `rhythm-attic/staging`, and moves any legacy
+`.curator-publish` directory to `rhythm-attic/publish-staging`. It does not tag,
+copy, publish, delete or replace music, or reset app state.
+
+Back up the library/state and stop Navidrome before applying. First preview:
+
+```sh
+sudo python3 app/configure_layout.py --project /opt/rhythm-desk --staging-user YOUR_LINUX_USER
+```
+
+Add `--apply` after reviewing the preview. The helper stops Rhythm Desk, requires
+same-filesystem non-symlinked paths, refuses reserved-name collisions, records a
+root-only migration journal, and saves a protected Compose backup. Ordinary errors
+before configuration commit roll moved paths back. A power loss needs manual
+journal inspection; leave services stopped rather than blindly retrying.
+
+Re-deploy normally afterward and update Navidrome's host music mount to
+`/srv/media/music/rhythm-attic/library`. Update any SMB ingestion share to
+`/srv/media/music/rhythm-attic/staging/incoming`. Verify before resuming approvals.
+Existing browser sessions, metadata, receipts and relative album destinations remain
+valid. The older configure_storage/configure_library helpers are legacy procedures,
+not migration tools for this new layout. Never rerun the access installer with old
+project environment paths: its protected snapshots are separate from this helper.
 
 ## Persistent Docker state and disposable test cleanup
 

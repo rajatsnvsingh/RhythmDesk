@@ -18,7 +18,7 @@ def root(settings):
 def excluded(settings, path):
     mount = Path(os.environ.get('CURATOR_SOURCE_ROOT', '/mnt/music-source')).resolve()
     host = Path(os.environ.get('CURATOR_HOST_SOURCE', '/srv/media/music'))
-    for key in ('CURATOR_HOST_STAGING', 'CURATOR_HOST_STATE', 'CURATOR_HOST_LIBRARY'):
+    for key in ('CURATOR_HOST_STAGING', 'CURATOR_HOST_STATE', 'CURATOR_HOST_LIBRARY', 'CURATOR_HOST_ATTIC'):
         value = os.environ.get(key)
         if value:
             try:
@@ -28,7 +28,7 @@ def excluded(settings, path):
             if path == blocked or blocked in path.parents:
                 return True
     # Also protect conventional operational directories when host mappings are unavailable.
-    return any(p in ('staging', 'curator-state', 'curator-test', 'rhythm-attic', '.uploads', '.imports') for p in path.relative_to(mount).parts)
+    return any(p in ('staging', 'publish-staging', 'curator-state', 'curator-test', 'rhythm-attic', '.uploads', '.imports') for p in path.relative_to(mount).parts)
 
 def resolve(settings, relative):
     if not isinstance(relative,str) or '\\' in relative:

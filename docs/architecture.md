@@ -120,7 +120,7 @@ sequenceDiagram
     Web-->>User: Published
 ```
 
-No-replace publication is the key safety property. An existing destination is an error, not an invitation to merge or overwrite. The hidden transfer is on the library filesystem so the final transition can be atomic. UI archival can cross Docker bind mounts; its copy-and-verify fallback retains a recovery source.
+No-replace publication is the key safety property. An existing destination is an error, not an invitation to merge or overwrite. Transfer work lives in `publish-staging`, beside—not inside—`library`. Both share one dedicated publisher parent mount, so the final transition is atomic. The parent's staging child is overlaid read-only, and parent permissions forbid publisher sibling replacement. Navidrome sees only `library`. UI archival can cross Docker bind mounts; its copy-and-verify fallback retains a recovery source.
 
 ## Filesystem ownership
 

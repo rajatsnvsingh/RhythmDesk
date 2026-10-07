@@ -28,6 +28,11 @@ pulls are intended; repository visibility and package visibility are distinct.
 
 ## Install a prebuilt image
 
+Use Compose and documentation from the **same release** as the image. Current
+`main` uses the three-folder attic layout and must not be paired with the older
+`v0.1.0` image. Publish a new version containing the layout change (for example
+`v0.1.1`) before using its prebuilt image. Do not reuse the old release tag.
+
 Download the release's source archive for Compose, `.env.example`, setup scripts
 and documentation. Follow [Deployment](deployment.md) to prepare the state volume,
 host folders and permissions first. The image includes the application and tools,

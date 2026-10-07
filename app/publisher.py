@@ -65,17 +65,21 @@ def publish(settings, job_id, expected_revision, approved_by='web'):
         target = safe_child(settings.library, destination)
         if target.exists():
             raise ValueError('Album already exists. Replacement is forbidden.')
+        # Both paths must be siblings on one publisher mount. Never put transfer
+        # files under the scanner-visible library or fall back to non-atomic copy.
+        transfer_root = settings.publish_root
+        if (transfer_root == settings.library or transfer_root.is_relative_to(settings.library)
+                or settings.library.is_relative_to(transfer_root)):
+            raise ValueError('Publish staging must be separate from the final library')
+        safe_child(transfer_root.parent, transfer_root.name)
+        transfer_root.mkdir(exist_ok=True)
+        if transfer_root.stat().st_dev != settings.library.stat().st_dev:
+            raise ValueError('Publish staging and library must share one filesystem and publisher mount')
         artist = target.parent
         if not artist.exists():
             artist.mkdir(mode=0o755)
             artist.chmod(0o755)
         safe_child(settings.library, destination)
-        # Hidden transfer lives outside the library until the atomic publication.
-        # It must be on the same filesystem. EXDEV fails without partial albums.
-        transfer_root = settings.library / '.curator-publish'
-        transfer_root.mkdir(exist_ok=True)
-        if transfer_root.is_symlink():
-            raise ValueError('Unsafe publisher transfer root')
         temporary = Path(tempfile.mkdtemp(prefix='approval-', dir=transfer_root))
         try:
             copy_root = temporary / 'audio'

@@ -3,7 +3,7 @@ async function loadSettings(){try{const s=await api('/api/settings');renderSetti
 function renderSettings(s){
   $('settings-status').textContent=s.runtime.paused?'Processing paused':'Processing enabled';
   $('mount-table').innerHTML='<div class="mount-list">'+s.mounts.map(m=>`<div><strong>${esc(m.volume?'STATE_VOLUME':m.key)}</strong><code>${esc(m.host)}</code><small>App: ${esc(m.internal)} · ${!m.exists?'Not mounted':!m.readable?'Not readable':m.writable?'Read / write':'Read only'}</small></div>`).join('')+'</div>';
-  $('intake-paths').innerHTML=`Incoming: <code>${esc(s.incoming)}</code><br>Curated: <code>${esc(s.curated)}</code><br>Needs review: <code>${esc(s.review)}</code><p>The web app reads the library; only the isolated publisher can write after explicit approval.</p>`;
+  $('intake-paths').innerHTML=`Incoming: <code>${esc(s.incoming)}</code><br>Curated: <code>${esc(s.curated)}</code><br>Needs review: <code>${esc(s.review)}</code>${s.publish_staging?`<br>Publish staging (publisher only): <code>${esc(s.publish_staging)}</code>`:''}<p>The web app reads the library; only the isolated publisher can write after explicit approval.</p>`;
   for(const [key,value] of Object.entries(s.runtime)){const el=$('runtime-form').elements[key];if(typeof value==='boolean')el.checked=value;else el.value=value;}
   const defaults={STAGING_PATH:'/srv/media/music/staging',STATE_PATH:'/srv/media/music/curator-state',LIBRARY_PATH:'/srv/media/music/rhythm-attic'};
   for(const m of s.mounts){const field=$('paths-form').elements[m.key];field.value=m.volume?m.internal:s.plan?.[m.key]||(m.host.startsWith('/')?m.host:defaults[m.key]);field.readOnly=Boolean(m.volume);field.title=m.volume?`Managed by Docker volume ${m.volume}; not a host media folder`:'';}

@@ -51,6 +51,8 @@ services:
       CURATOR_HOST_STATE: "Docker volume: ${STATE_VOLUME:-rhythm-desk-state}"
       CURATOR_STATE_VOLUME: ${STATE_VOLUME:-rhythm-desk-state}
       CURATOR_HOST_LIBRARY: ${LIBRARY_PATH:?Set LIBRARY_PATH}
+      CURATOR_HOST_ATTIC: ${ATTIC_PATH:?Set ATTIC_PATH}
+      CURATOR_HOST_PUBLISH: ${ATTIC_PATH}/publish-staging
       CURATOR_SOURCE_ROOT: /mnt/music-source
       CURATOR_HOST_SOURCE: ${SOURCE_PATH:-/srv/media/music}
       STABLE_SECONDS: "${STABLE_SECONDS:-180}"
@@ -77,6 +79,8 @@ services:
     environment:
       <<: *environment
       CURATOR_UI_UID: ${UI_UID:-10002}
+      CURATOR_LIBRARY_ROOT: /srv/media/music/rhythm-attic/library
+      CURATOR_PUBLISH_ROOT: /srv/media/music/rhythm-attic/publish-staging
       CURATOR_PUBLISH_SOCKET: /run/rhythm-publisher/publish.sock
     volumes:
       - ${STAGING_PATH:-./data/staging}/Curated:/srv/media/music/staging/Curated:ro
@@ -89,7 +93,10 @@ services:
         target: /var/lib/rhythm-desk/taxonomy
         read_only: true
         volume: {nocopy: true, subpath: taxonomy}
-      - ${LIBRARY_PATH:?Set LIBRARY_PATH to the existing Rhythm Attic}:/srv/media/music/rhythm-attic
+      # One mount permits atomic rename between publish-staging and library.
+      # The host parent is traverse-only for publisher; staging is overlaid RO.
+      - ${ATTIC_PATH:?Set ATTIC_PATH}:/srv/media/music/rhythm-attic
+      - ${STAGING_PATH}:/srv/media/music/rhythm-attic/staging:ro
       - publisher-socket:/run/rhythm-publisher
 volumes:
   state:

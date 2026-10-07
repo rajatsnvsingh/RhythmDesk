@@ -14,6 +14,7 @@ def main():
     parser.add_argument('--ui-uid', type=int, default=10002)
     parser.add_argument('--publisher-uid', type=int, default=10003)
     args = parser.parse_args()
+    publish_root = args.library.parent / 'publish-staging'
     if os.geteuid() != 0:
         parser.error('Run with sudo to grant the service IDs directory access')
     for path in (args.staging, args.state, args.library):
@@ -24,6 +25,14 @@ def main():
         parser.error('Staging, state and library must be separate non-overlapping directories')
     if not args.library.is_dir():
         parser.error('The final library must already exist')
+    if (args.library.name != 'library' or args.staging.name != 'staging'
+            or args.staging.parent != args.library.parent):
+        parser.error('Use sibling staging and library directories under the dedicated attic parent')
+    for component in (publish_root, *publish_root.parents):
+        if component.is_symlink():
+            parser.error('Publish staging and its ancestors must not be symlinks')
+    if any(p.name not in {'library', 'staging', 'publish-staging'} for p in args.library.parent.iterdir()):
+        parser.error('The dedicated attic parent must contain only library, staging and publish-staging')
     import grp
     import pwd
     identities = [('rhythm-curator', args.worker_uid), ('rhythm-ui', args.ui_uid), ('rhythm-publisher', args.publisher_uid)]
@@ -82,10 +91,16 @@ def main():
     subprocess.run(['setfacl', '-R', '-m', f'u:{args.ui_uid}:rX,u:{args.publisher_uid}:rX', str(args.library)], check=True)
     for folder in [args.library, *(p for p in args.library.iterdir() if p.is_dir() and not p.is_symlink())]:
         subprocess.run(['setfacl', '-m', f'u:{args.publisher_uid}:rwx', str(folder)], check=True)
-    transfer = args.library / '.curator-publish'
+    # Parent is traverse/read only, so publisher cannot replace sibling folders.
+    parent = args.library.parent
+    subprocess.run(['setfacl', '-b', '-k', str(parent)], check=True)
+    os.chown(parent, 0, 10000)
+    parent.chmod(0o750)
+    transfer = publish_root
     transfer.mkdir(exist_ok=True)
     os.chown(transfer, args.publisher_uid, 10000)
-    transfer.chmod(0o2770)
+    subprocess.run(['setfacl', '-b', '-k', str(transfer)], check=True)
+    transfer.chmod(0o2700)
     print('Prepared staging/state and scoped library ACLs. Existing music was not edited.')
 
 

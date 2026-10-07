@@ -103,6 +103,9 @@ class PipelineTests(unittest.TestCase):
         desk, detail = self.curate()
         job_id = detail['job']['id']
         receipt = publish(self.settings, job_id, detail['review']['revision'])
+        self.assertFalse((self.settings.library / '.curator-publish').exists())
+        self.assertTrue(self.settings.publish_root.is_dir())
+        self.assertEqual(list(self.settings.publish_root.iterdir()), [])
         source = self.settings.curated / job_id
         original_rename = Path.rename
         def rename(path, target):

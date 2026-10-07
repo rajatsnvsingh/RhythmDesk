@@ -162,10 +162,6 @@ def prepare_library(path, ui_uid, publisher_uid):
         path.mkdir(mode=0o750)
         os.chown(path, 0, 10000)
     subprocess.run(['setfacl', '-m', f'u:{ui_uid}:r-x,u:{publisher_uid}:rwx', str(path)], check=True)
-    transfer = path / '.curator-publish'
-    transfer.mkdir(mode=0o700, exist_ok=True)
-    os.chown(transfer, publisher_uid, 10000)
-    transfer.chmod(0o2700)
 
 
 def compose(project, filename, *args):

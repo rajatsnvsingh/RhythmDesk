@@ -32,6 +32,9 @@ def save_paths(settings, values):
         raise ValueError('Supply staging, state and library directories')
     if os.environ.get('CURATOR_STATE_VOLUME') and values['STATE_PATH'] != str(settings.state):
         raise ValueError('Docker-managed state cannot be moved through a directory plan')
+    attic = os.environ.get('CURATOR_HOST_ATTIC')
+    if attic and (values['STAGING_PATH'] != attic + '/staging' or values['LIBRARY_PATH'] != attic + '/library'):
+        raise ValueError('The atomic publishing layout requires staging and library beneath the configured attic parent; use administrator migration to change it')
     paths = []
     for key, value in values.items():
         if key == 'STATE_PATH' and os.environ.get('CURATOR_STATE_VOLUME'):
@@ -62,6 +65,7 @@ def describe(settings):
                 internal=str(path), exists=path.is_dir(), readable=os.access(path, os.R_OK),
                 writable=os.access(path, os.W_OK),
                 volume=os.environ.get('CURATOR_STATE_VOLUME', '') if key == 'STATE_PATH' else '') for key, path, env in mappings],
+                publish_staging=os.environ.get('CURATOR_HOST_PUBLISH'),
                 plan=json.loads(row['value']) if row else None,
                 incoming=str(settings.incoming), curated=str(settings.curated), review=str(settings.review))
 

@@ -20,7 +20,8 @@ class Settings:
         self.review = self.root / 'staging/needs-review'
         self.state = Path(os.environ.get('CURATOR_STATE_ROOT', str(self.root / 'curator-state'))).resolve()
         self.archive = self.state / 'processed'
-        self.library = self.root / 'rhythm-attic'
+        self.library = Path(os.environ.get('CURATOR_LIBRARY_ROOT', str(self.root / 'rhythm-attic'))).absolute()
+        self.publish_root = Path(os.environ.get('CURATOR_PUBLISH_ROOT', str(self.root / 'publish-staging'))).absolute()
         self.db = self.state / 'curator.sqlite3'
         self.config = Path(os.environ.get('BEETS_CONFIG', '/etc/rhythm-curator/config.yaml'))
         self.socket = os.environ.get('CURATOR_PUBLISH_SOCKET', '/run/rhythm-publisher/publish.sock')
