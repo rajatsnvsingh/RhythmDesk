@@ -1,11 +1,19 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const app=fs.readFileSync(path.join(__dirname,'../app/static/app.js'),'utf8');
 const review=fs.readFileSync(path.join(__dirname,'../app/static/review-tools.js'),'utf8');
+test('genre and category cells contain one direct input each, not stacked label forms',()=>{
+  const ctx=vm.createContext({esc:String});vm.runInContext(review.slice(review.indexOf('function labelCell('),review.indexOf('function trackRow(')),ctx);
+  for(const kind of ['genres','tags']){
+    const cell=ctx.labelCell({title:'Song',genres:['Rock','Soul'],tags:['Focus']},3,kind,true);
+    assert.equal((cell.match(/<input /g)||[]).length,1);assert.match(cell,new RegExp(`data-field="${kind}"`));assert.match(cell,new RegExp(`list="allowed-${kind}"`));assert.doesNotMatch(cell,/<select|<button|editable-chips|row-label-editor/);
+    assert.doesNotMatch(ctx.labelCell({title:'Song',genres:[],tags:[]},3,kind,false),/<input/);
+  }
+});
 function removalSetup(){
   const box={hidden:true,innerHTML:'',scrollIntoView(){}},messages=[];
   const detail={job:{status:'Curated'},review:{revision:'exact-revision',tracks:[{file:'01.flac',title:'Original',disc:1,track:1},{file:'02.flac',title:'Alternate',disc:1,track:2}]}};
   const ctx=vm.createContext({detail,editor:{manual:false},songRemoval:null,$:()=>box,esc:String,feedback:m=>messages.push(m)});
-  vm.runInContext(review.slice(review.indexOf('function editable('),review.indexOf('function labelEditor(')),ctx);
+  vm.runInContext(review.slice(review.indexOf('function editable('),review.indexOf('function labelCell(')),ctx);
   const start=review.indexOf('function confirmSongRemoval('),end=review.indexOf('function candidateCard(',start);
   vm.runInContext(review.slice(start,end),ctx);
   return {ctx,box,messages,run:indexes=>ctx.confirmSongRemoval(indexes)};

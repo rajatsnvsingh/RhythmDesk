@@ -220,6 +220,36 @@ dialog::backdrop { background: #0d100bdd; backdrop-filter: none; }
   .more-links strong { font-size: 23px; }
 }
 .candidate-picker { margin: 1rem 0; }
+/* Spreadsheet-like track editing: one input per cell, never nested label forms. */
+.review-table-wrap { overflow: auto; -webkit-overflow-scrolling: touch; margin-top: 8px; }
+.compact-track-table { width: 100%; min-width: 1050px; table-layout: fixed; }
+.compact-track-table th:nth-child(1) { width: 13%; }
+.compact-track-table th:nth-child(2) { width: 25%; }
+.compact-track-table th:nth-child(3) { width: 13%; }
+.compact-track-table th:nth-child(4) { width: 12%; }
+.compact-track-table th:nth-child(5), .compact-track-table th:nth-child(6) { width: 12%; }
+.compact-track-table th:nth-child(7) { width: 13%; }
+.compact-track-table .review-track td { padding: 6px; vertical-align: middle; }
+.compact-track-table input.edit-field { height: 32px; min-height: 32px; padding: 5px 7px; margin: 0; width: 100%; font-size: 12px; }
+.compact-track-table .source-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; }
+.compact-track-table .field-value { overflow-wrap: anywhere; }
+.compact-track-table .review-labels { min-width: 0; }
+.compact-track-table .review-position { white-space: nowrap; }
+.editing .compact-track-table .position-inputs, .compact-track-table .row-editing .position-inputs { display: inline-flex; vertical-align: middle; gap: 3px; }
+.compact-track-table .position-inputs input { width: 40px; padding-inline: 4px; }
+.compact-track-table .review-position .hit-target { display: inline-flex; vertical-align: middle; width: 26px; min-height: 32px; justify-content: center; }
+.compact-track-table .review-controls button { padding: 5px; min-width: 26px; font-size: 11px; }
+.editing .compact-track-table [data-edit-row] { display: none; }
+@media(max-width:700px) {
+  .review-table-wrap { border: 1px solid var(--line); }
+  .compact-track-table { display: table; min-width: 1050px; }
+  .compact-track-table thead { display: table-header-group; position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
+  .compact-track-table tbody { display: table-row-group; }
+  .compact-track-table tr.review-track, .compact-track-table thead tr { display: table-row; padding: 0; margin: 0; }
+  .compact-track-table tr.review-track td, .compact-track-table th { display: table-cell; }
+  .compact-track-table .review-track td::before { content: none; }
+  .compact-track-table input.edit-field { font-size: 16px; } /* Avoid mobile browser zoom on focus. */
+}
 .candidate-card { border: 1px solid var(--line, #55594c); padding: 1rem; margin: .75rem 0; overflow-wrap: anywhere; }
 .candidate-card p { margin: .5rem 0; }
 .candidate-card .check-label { display: flex; align-items: center; gap: .5rem; margin: .75rem 0; }

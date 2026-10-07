@@ -89,6 +89,8 @@ To discard one unpublished release, open its inspector and choose **Delete relea
 
 ### Remove bonus or alternate songs
 
+The track editor uses a compact table: title, artist, genres and category tags are edited directly in separate cells. Enter multiple genres/tags with semicolons; allowed values are suggested as you type. Shared changes use the selected-track batch controls above the table. Unknown values still appear in the album-level allow/map/remove checklist and block publication. On phones, swipe the table horizontally to reach additional columns; it does not expand each track into a tall form.
+
 Removal also works **before manual preparation**, including when unwanted bonus versions have duplicate track numbers. Click **Remove** on a row or **Remove selected songs…**, then confirm. This changes the manual draft without discarding your metadata or artwork edits. Click **Prepare manual copy** to save the selection and prepare only the remaining songs. Excluded originals stay in Incoming, and saved exclusions survive a failed preparation/reload. Closing an unsaved draft uses the usual discard confirmation.
 
 In a **Curated** album, click **Remove** beside a song, or select several rows and click **Remove selected songs…**. Review the song list, check the confirmation and remove them from the prepared copy. Save any metadata edits first, or discard them when prompted. The inspector stays open with the remaining songs.
