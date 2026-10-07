@@ -34,7 +34,7 @@ All useful metadata stays visible. Amber marks blockers, unknown labels and unsa
 - Edits affect disposable working copies, retain originals and generate a new review revision.
 - The server and publisher remain authoritative: presentation readiness cannot bypass byte/revision checks, allowed labels, explicit approval or no-replacement rules.
 - No new bulk-publish, library-edit or force-overwrite control exists.
-- Purge still requires a checkbox, coordinates with worker activity and excludes library/state archives. No purge was performed on Nexus during verification.
+- Purge still requires a checkbox, coordinates with worker activity and excludes library/state archives. No purge was performed on the live server during verification.
 - Deployment changes source only; administrator-pinned mounts, identities, Beets thresholds, credentials and container isolation are unchanged.
 
 ## Verification performed

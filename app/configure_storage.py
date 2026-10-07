@@ -1,4 +1,4 @@
-"""Administrator-only fresh storage transition and guarded disposal of Nexus test data.
+"""Administrator-only fresh storage transition and guarded disposal of legacy test data.
 
 Run the storage switch first, redeploy and verify, then run --purge-test --apply.
 Only the fixed curator-test directory is removable. Real music is never migrated.
@@ -226,7 +226,7 @@ def purge_test(config):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project', type=Path, required=True)
-    parser.add_argument('--staging-user', default='raj')
+    parser.add_argument('--staging-user', help='Linux account to grant staging access (required for a fresh storage switch)')
     parser.add_argument('--purge-test', action='store_true')
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
@@ -255,6 +255,8 @@ def main():
         if is_current(config):
             print('Storage is already configured. No data was reset.')
             return
+        if not args.staging_user:
+            parser.error('Pass --staging-user with your Linux account for a fresh storage switch')
         base.install_plan(project, plan, kind='storage', normalizer=canonical, validate_only=True)
         if not args.apply:
             print('Dry run only. --apply stops the stack and prepares fresh storage; test data stays until --purge-test.')

@@ -7,7 +7,7 @@ import zipfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--key', required=True)
-parser.add_argument('--host', required=True, help='Restricted SSH account, e.g. rhythm-deploy@nexus')
+parser.add_argument('--host', required=True, help='Restricted SSH account, e.g. rhythm-deploy@music-server')
 parser.add_argument('--status', action='store_true')
 args = parser.parse_args()
 command = ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-i', args.key, args.host,

@@ -25,7 +25,7 @@ are supported; incomplete albums require appropriate matching mode and explicit 
 ## Docker setup
 
 Prerequisites: Docker Compose with volume-subpath support on Linux, Python 3 for
-bootstrap, and ACL tools (setfacl). The tested Nexus Docker/Compose versions support it.
+bootstrap, and ACL tools (setfacl). Use a Docker/Compose version that supports volume subpaths.
 
 1. Copy .env.example to .env. Set a strong random CURATOR_UI_TOKEN, staging/library
    paths, STATE_VOLUME, and SOURCE_PATH for the read-only music drawer.
@@ -35,9 +35,9 @@ bootstrap, and ACL tools (setfacl). The tested Nexus Docker/Compose versions sup
    ```sh
    docker volume create rhythm-desk-state
    sudo python3 app/bootstrap.py \
-     --staging /srv/media/music/staging \
+     --staging /srv/rhythm-desk/staging \
      --state "$(docker volume inspect --format '{{.Mountpoint}}' rhythm-desk-state)" \
-     --library /srv/media/music/rhythm-attic
+     --library /srv/music/library
    ```
 
    Use your configured paths and volume name. The state path above is Docker's managed
@@ -73,13 +73,17 @@ Never store state in a container's disposable writable layer or expose it via SM
 `CURATOR_STATE_ROOT` controls the internal path; `STATE_VOLUME` selects the volume.
 Settings identifies this as Docker storage and cannot redirect it through a path plan.
 
-For the existing Nexus **disposable** `curator-test` workspace, the administrator helper
+The following section is a compatibility procedure, not the fresh-install path.
+Its fixed `/srv/media/music/curator-test` paths are deliberate safety guards, not
+personal configuration. Do not use it for arbitrary directory migration.
+
+For a legacy **disposable** `curator-test` workspace, the administrator helper
 prepares a fresh volume and `/srv/media/music/staging`, keeping the real library,
 source drawer, token, networking and identities unchanged:
 
 ```sh
-cd ~/apps/rhythm-curator
-sudo python3 app/configure_storage.py --project /home/raj/apps/rhythm-curator --apply
+cd /opt/rhythm-desk
+sudo python3 app/configure_storage.py --project /opt/rhythm-desk --staging-user YOUR_LINUX_USER --apply
 ```
 
 Without `--apply`, this only validates the plan. With it, the three services stop,
@@ -88,13 +92,13 @@ is backed up and replaced. Re-deploy through the usual restricted command afterw
 Fresh storage deliberately does not migrate test settings, labels, sessions or history.
 Sign in with the existing token and configure allow lists again. If an SMB share
 points at the old test staging, update its path to `/srv/media/music/staging/incoming`.
-The helper grants the named staging user (default `raj`) access to the new staging.
+Replace `YOUR_LINUX_USER` with the Linux account that should have staging access.
 
 After verifying effective mounts and empty workspace/library statistics, remove the
 explicitly disposable test directory using the separate guarded administrator step:
 
 ```sh
-sudo python3 app/configure_storage.py --project /home/raj/apps/rhythm-curator --purge-test --apply
+sudo python3 app/configure_storage.py --project /opt/rhythm-desk --purge-test --apply
 ```
 
 This permanently removes only `/srv/media/music/curator-test`. It rejects symlinked
@@ -117,7 +121,7 @@ a relative subfolder without changing Docker mounts. Host mount changes require
 administrator configuration.
 
 Incoming is the writable ingestion folder at <STAGING_PATH>/incoming.
-Use Incoming → Browse Nexus music to select files or folders. Selections are copied
+Use Incoming → Browse music drawer to select files or folders. Selections are copied
 server-side with relative paths preserved. Source files are never moved or edited.
 Staging, state, and published-library folders are excluded to avoid recursive imports.
 A whole copied batch becomes visible as incoming/Import-<id>/ only after completion.
@@ -202,7 +206,7 @@ deployment authority, not protection against malicious application code.
 Re-running the installer refreshes protected deployment configuration snapshots.
 
 For an existing restricted deployment, an administrator can add the music drawer:
-`sudo python3 app/configure_source.py --project <absolute-project-directory> --source /srv/media/music`
+`sudo python3 app/configure_source.py --project <absolute-project-directory> --source /srv/music/source`
 This backs up and updates only the protected web-service source mount. Source
 permissions are unchanged. Re-deploy normally afterward to recreate containers.
 The deployment key cannot execute this administrator command.
@@ -214,10 +218,10 @@ the administrator snapshot can contain fully rendered paths. Use the narrow
 administrator helper instead:
 
 ```sh
-cd ~/apps/rhythm-curator
+cd /opt/rhythm-desk
 sudo python3 app/configure_library.py \
-  --project /home/raj/apps/rhythm-curator \
-  --library /srv/media/music/rhythm-attic
+  --project /opt/rhythm-desk \
+  --library /srv/music/library
 ```
 
 This is a dry run. Add `--apply` to create the empty library, grant the UI read-only
@@ -261,5 +265,5 @@ never use actual music as test fixtures.
 
 The repository excludes .env, keys, local runtimes/data, databases, logs, and
 deployment backups. Review staged content before each push. Never put credentials
-in repository URLs or commit messages. No license is selected yet; decide on
-licensing before making this repository public.
+in repository URLs or commit messages. Rhythm Desk is released under the
+[MIT License](../LICENSE).

@@ -20,7 +20,7 @@ def configuration():
     workspace = [bind(staging, switch.STAGING_TARGET), bind(state, switch.STATE_TARGET)]
     services = {
         'worker': dict(user='10001:10000', volumes=copy.deepcopy(workspace)),
-        'web': dict(user='10002:10000', ports=['10.0.0.136:8765:8765'],
+        'web': dict(user='10002:10000', ports=['192.0.2.10:8765:8765'],
                     environment={'CURATOR_UI_TOKEN': 'synthetic-$token',
                                  'CURATOR_HOST_LIBRARY': library, 'CURATOR_HOST_STATE': state},
                     volumes=copy.deepcopy(workspace) + [
@@ -245,7 +245,7 @@ class LibrarySwitchTests(unittest.TestCase):
 
     def test_main_rejects_non_administrator_before_any_docker_call(self):
         with patch.object(switch.os, 'geteuid', return_value=10001, create=True), \
-                patch.object(sys, 'argv', ['configure_library.py', '--project', '/home/raj/apps/rhythm-curator',
+                patch.object(sys, 'argv', ['configure_library.py', '--project', '/opt/rhythm-desk',
                                          '--library', '/srv/media/music/rhythm-attic', '--apply']), \
                 patch.object(switch, 'compose') as docker:
             with self.assertRaises(SystemExit):

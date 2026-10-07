@@ -134,4 +134,4 @@ python -m unittest discover -s tests
 
 The test suite uses tiny synthetic audio fixtures. GitHub Actions runs the suite on Linux. Keys, `.env`, local runtimes, audio, databases, logs and deployment backups must stay out of commits.
 
-**Current scope:** a single-user curation desk, not a music acquisition client, multi-user platform or automatic library replacer. No license has been selected yet; choose one before a public release.
+**Current scope:** a single-user curation desk, not a music acquisition client, multi-user platform or automatic library replacer. Released under the [MIT License](LICENSE).
