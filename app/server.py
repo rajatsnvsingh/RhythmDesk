@@ -34,6 +34,10 @@ class Desk:
         self.session_lock = threading.Lock()
         self.stats_lock = threading.Lock()
         self.login_attempts = {}
+        self.publication_lock=threading.Lock()
+        self.publications=set()
+        self.publication_attempts={}
+        self.finalization_locks={}
         with connect(settings) as db:
             db.execute('CREATE TABLE IF NOT EXISTS web_sessions (id_hash TEXT PRIMARY KEY, csrf TEXT, expires REAL, credential TEXT)')
             db.execute('DELETE FROM web_sessions WHERE expires<=? OR credential!=?', (time.time(), self.credential()))
@@ -94,7 +98,6 @@ class Desk:
             jobs = [dict(row) for row in db.execute('SELECT * FROM jobs ORDER BY updated DESC')]
             events = [dict(row) for row in db.execute('SELECT * FROM events ORDER BY id DESC LIMIT 100')]
             meta = {row['key']: row['value'] for row in db.execute("SELECT * FROM meta WHERE key IN ('worker_heartbeat','last_scan','library_stats') OR key LIKE 'progress:%'")}
-        reconciled = False
         publisher = not self.demo and Path(self.settings.socket).exists()
         from ux import readiness, recovery, release_identity, queue_page
         for job in jobs:
@@ -104,9 +107,23 @@ class Desk:
                 if receipt.exists():
                     data = json.loads(receipt.read_text(encoding='utf-8'))
                     if data['revision'] == job['revision']:
-                        self.finish_approval(job['id'], data)
-                        job['status'] = 'Approved'
-                        reconciled = True
+                        if job['status']=='Curated':
+                            with connect(self.settings) as db:
+                                changed=db.execute("UPDATE jobs SET status='Publishing',reason='',updated=? WHERE id=? AND status='Curated' AND revision=?",(time.time(),job['id'],job['revision'])).rowcount
+                            if changed:
+                                job['status']='Publishing'
+                                job_counts['Curated']=max(0,job_counts.get('Curated',0)-1)
+                                job_counts['Publishing']=job_counts.get('Publishing',0)+1
+                            else:
+                                with connect(self.settings) as db:
+                                    current=db.execute('SELECT * FROM jobs WHERE id=?',(job['id'],)).fetchone()
+                                if current:job.update(dict(current))
+                        if job['status']=='Publishing' and data['revision']==job['revision']:
+                            self.schedule_publication(job['id'],job['revision'])
+                elif job['status']=='Publishing' and not job.get('reason'):
+                    # Publishing is a durable, explicitly authorized revision.
+                    # Resume safely after a web restart; publisher receipts are idempotent.
+                    self.schedule_publication(job['id'],job['revision'])
             target = self.settings.library / (job['destination'] or '__unset__')
             job['destination_exists'] = bool(job['destination'] and target.exists())
             review_path = self.job_folder(job) / 'REVIEW.json'
@@ -122,21 +139,14 @@ class Desk:
             if record:
                 found = unknown(self.settings, record['tracks'])
                 if job['status'] == 'Curated':
-                    job['reason'] = 'Unapproved genres/tags: ' + json.dumps(found) if any(found.values()) else ''
+                    failure=job['reason'].split('\nUnapproved genres/tags:')[0] if (job['reason'] or '').startswith('Publication failed:') else ''
+                    job['reason'] = '\n'.join(filter(None,[failure,'Unapproved genres/tags: '+json.dumps(found) if any(found.values()) else '']))
                 cover = next((t for t in record['tracks'] if t.get('artwork')), None)
                 if cover:
                     job['cover_url'] = '/api/media?' + urlencode(dict(job=job['id'],file=cover['file'],art=1))
             job['readiness'] = readiness(job, record, found, job['destination_exists'], publisher, self.demo)
             job['recovery'] = recovery(job)
             job['identity'] = release_identity(job, record)
-        if reconciled:
-            with connect(self.settings) as db:
-                counts = {row['status']: row['n'] for row in db.execute('SELECT status,count(*) n FROM tracks GROUP BY status')}
-                job_counts = {row['status']: row['n'] for row in db.execute('SELECT status,count(*) n FROM jobs GROUP BY status')}
-            approved_ids = {job['id'] for job in jobs if job['status'] == 'Approved'}
-            for track in tracks:
-                if track['job_id'] in approved_ids:
-                    track['status'] = 'Approved'
         from intake import detect
         page, job_total, review_counts = queue_page(jobs, job_query, job_filter, job_offset, job_limit, job_sort, job_direction)
         decisions = [j for j in jobs if j['status'] in ('Curated', 'Needs review')][:6]
@@ -198,7 +208,8 @@ class Desk:
                 log_text = stream.read().decode('utf-8', 'replace')
         if review and job['status'] == 'Curated':
             found = unknown(self.settings, review['tracks'])
-            job['reason'] = 'Unapproved genres/tags: ' + json.dumps(found) if any(found.values()) else ''
+            failure=job['reason'].split('\nUnapproved genres/tags:')[0] if (job['reason'] or '').startswith('Publication failed:') else ''
+            job['reason'] = '\n'.join(filter(None,[failure,'Unapproved genres/tags: '+json.dumps(found) if any(found.values()) else '']))
         from processing import read
         job['progress']=read(self.settings,job_id)
         from ux import readiness, recovery, release_identity
@@ -337,11 +348,31 @@ class Desk:
                     db.execute("UPDATE jobs SET status='Curated' WHERE id=? AND status='Editing'", (job_id,))
 
     def finish_approval(self, job_id, receipt):
+        import contextlib
+        with self.publication_lock:
+            lock=self.finalization_locks.setdefault(job_id,threading.Lock())
+        with lock,contextlib.ExitStack() as stack:
+            if os.name=='posix':
+                import fcntl
+                handle=stack.enter_context(safe_child(self.settings.state,'finalize-'+job_id+'.lock').open('a'))
+                fcntl.flock(handle,fcntl.LOCK_EX)
+            return self._finish_approval(job_id,receipt)
+
+    def _finish_approval(self, job_id, receipt):
+        from common import inventory,revision,sha256
+        from publisher import rename_no_replace
+        from processing import update
+        with connect(self.settings) as db:
+            job=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if not job or receipt['job_id']!=job_id or receipt['revision']!=job['revision'] or receipt['destination']!=job['destination']:
+            raise ValueError('Publication receipt does not match the approved job revision')
+        if job['status']=='Approved':return
+        update(self.settings,job_id,'Archiving','Published audio is safe; retaining and verifying the review archive')
         source = safe_child(self.settings.curated, job_id)
         archived = safe_child(self.settings.archive, job_id)
         if source.exists() and not archived.exists():
             try:
-                source.rename(archived)
+                rename_no_replace(source,archived)
             except OSError as error:
                 import errno
                 if error.errno != errno.EXDEV:
@@ -357,13 +388,28 @@ class Desk:
                             raise ValueError('Symlink in archive source')
                         if file.is_file() and sha256(file) != sha256(temporary / file.relative_to(source)):
                             raise ValueError('Archive copy failed verification; source retained')
-                    temporary.rename(archived)
+                    rename_no_replace(temporary,archived)
                 finally:
                     if temporary.exists():
                         shutil.rmtree(temporary)
-        review_file = archived / 'REVIEW.json'
+        review_file = safe_child(archived,'REVIEW.json')
+        if not review_file.exists():
+            raise ValueError('Review archive missing; publication receipt retained for recovery')
         if review_file.exists():
             record = json.loads(review_file.read_text(encoding='utf-8'))
+            if revision(record)!=receipt['revision'] or record['revision']!=receipt['revision']:
+                raise ValueError('Existing archive differs from the approved revision; no archive replaced')
+            if inventory(archived/'audio')!=record['sha256']:
+                raise ValueError('Archive audio differs from the approved revision; no archive replaced')
+            if {Path(name).name:checksum for name,checksum in record['sha256'].items()}!=receipt['files']:
+                raise ValueError('Archive differs from publication receipt; administrator review required')
+            if source.exists():
+                for path in source.rglob('*'):
+                    if path.is_symlink():raise ValueError('Symlink in retained archive source')
+                    if path.is_file() and path.relative_to(source).as_posix()!='REVIEW.json':
+                        target=safe_child(archived,path.relative_to(source))
+                        if not target.is_file() or sha256(path)!=sha256(target):
+                            raise ValueError('Existing archive is incomplete or differs from retained source; no archive replaced')
             if record.get('status') != 'Approved':
                 record.update(status='Approved', approved_at=receipt['approved_at'], approved_by=receipt['approved_by'])
                 atomic_json(review_file, record)
@@ -373,46 +419,101 @@ class Desk:
             db.execute("UPDATE tracks SET status='Approved' WHERE job_id=?", (job_id,))
         if changed:
             event(self.settings, 'Explicitly approved and published to Rhythm Attic', job_id)
+        update(self.settings,job_id,'Published','Publication complete; review archive verified')
+
+    def schedule_publication(self,job_id,reviewed_revision,force=False):
+        with self.publication_lock:
+            if job_id in self.publications or (not force and time.time()-self.publication_attempts.get(job_id,0)<30):
+                return False
+            self.publications.add(job_id)
+            self.publication_attempts[job_id]=time.time()
+        def run():
+            try:self._publish_background(job_id,reviewed_revision)
+            finally:
+                with self.publication_lock:self.publications.discard(job_id)
+        threading.Thread(target=run,daemon=True).start()
+        return True
+
+    def resume_publications(self):
+        if self.demo:return
+        with connect(self.settings) as db:
+            jobs=db.execute("SELECT id,revision FROM jobs WHERE status='Publishing'").fetchall()
+        for job in jobs:self.schedule_publication(job['id'],job['revision'])
 
     def approve(self, job_id, reviewed_revision):
         if self.demo:
             raise ValueError('Demo is isolated; publication is disabled')
-        from taxonomy import validate_audio
-        validate_audio(self.settings, safe_child(self.settings.curated, job_id) / 'audio')
         with connect(self.settings) as db:
             db.execute('BEGIN IMMEDIATE')
             job = db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
             if not job or job['status'] != 'Curated' or job['revision'] != reviewed_revision:
                 raise ValueError('Album changed or is not Curated. Reload and review again.')
-            db.execute("UPDATE jobs SET status='Publishing',updated=? WHERE id=?", (time.time(), job_id))
+            db.execute("UPDATE jobs SET status='Publishing',reason='',updated=? WHERE id=?", (time.time(), job_id))
+        from processing import update
+        update(self.settings,job_id,'Publication queued','Explicit approval received; publication will run in the background',started=time.time())
+        self.schedule_publication(job_id,reviewed_revision,force=True)
+        return {'queued':True,'job_id':job_id,'revision':reviewed_revision}
+
+    def _publish_background(self,job_id,reviewed_revision):
+        from processing import update
+        sent=False;response=None
         try:
+            receipt_path=self.settings.state/'approvals'/(job_id+'.json')
+            if receipt_path.exists():
+                self.finish_approval(job_id,json.loads(receipt_path.read_text(encoding='utf-8')))
+                self.refresh_stats()
+                return
+            from taxonomy import validate_audio
+            update(self.settings,job_id,'Validating publication','Checking approved working-copy labels and audio')
+            validate_audio(self.settings,safe_child(self.settings.curated,job_id)/'audio')
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(120)
+                client.settimeout(1800)
                 client.connect(self.settings.socket)
+                update(self.settings,job_id,'Publishing','Waiting for publisher; no reliable percentage yet')
                 client.sendall(json.dumps({'action': 'approve', 'job_id': job_id, 'revision': reviewed_revision}).encode() + b'\n')
+                sent=True
                 buffer = b''
-                while b'\n' not in buffer:
+                response=None
+                while response is None:
                     chunk = client.recv(4096)
                     if not chunk or len(buffer) > 65536:
                         raise ValueError('Publisher did not return a valid receipt; check activity')
                     buffer += chunk
-                response = json.loads(buffer.split(b'\n', 1)[0])
+                    while b'\n' in buffer:
+                        line,buffer=buffer.split(b'\n',1)
+                        frame=json.loads(line)
+                        if 'progress' in frame:
+                            progress=frame['progress']
+                            update(self.settings,job_id,progress['phase'],progress.get('message',''),progress.get('completed'),progress.get('total'))
+                        else:
+                            response=frame;break
             if not response['ok']:
                 raise ValueError(response['error'])
             self.finish_approval(job_id, response['receipt'])
             self.refresh_stats()
             return response['receipt']
-        except Exception:
+        except Exception as error:
             # A timeout may mean publication succeeded. Reconcile its receipt
             # before re-enabling approval; existing destinations never overwrite.
             receipt_path = self.settings.state / 'approvals' / (job_id + '.json')
             if receipt_path.exists():
-                receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
-                self.finish_approval(job_id, receipt)
-                return receipt
+                try:
+                    self.finish_approval(job_id,json.loads(receipt_path.read_text(encoding='utf-8')))
+                    self.refresh_stats()
+                    return
+                except Exception as archive_error:
+                    error=archive_error
+                    with connect(self.settings) as db:
+                        db.execute("UPDATE jobs SET reason=?,updated=? WHERE id=? AND status='Publishing'",('Published; archive needs attention: '+str(error),time.time(),job_id))
+                    update(self.settings,job_id,'Archive needs attention',str(error))
+                    event(self.settings,'Published audio retained; archive finalization failed: '+str(error),job_id,'error')
+                    return
             with connect(self.settings) as db:
-                db.execute("UPDATE jobs SET status='Curated' WHERE id=? AND status='Publishing'", (job_id,))
-            raise
+                ambiguous=sent and response is None
+                reason=('Publication outcome needs attention: ' if ambiguous else 'Publication failed: ')+str(error)
+                db.execute("UPDATE jobs SET status=?,reason=?,updated=? WHERE id=? AND status='Publishing'",('Publishing' if ambiguous else 'Curated',reason,time.time(),job_id))
+            update(self.settings,job_id,'Publication outcome needs attention' if ambiguous else 'Publication failed',str(error))
+            event(self.settings,'Publication failed: '+str(error),job_id,'error')
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -677,7 +778,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.desk.edit(job_id, data)
                     self.json({'ok': True})
                 elif action == 'approve':
-                    self.json({'receipt': self.desk.approve(job_id, data['revision'])})
+                    self.json(self.desk.approve(job_id, data['revision']),202)
                 else:
                     self.json({'error': 'Unknown action'}, 404)
             else:
@@ -748,6 +849,7 @@ def main():
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
     server.daemon_threads = True
     server.desk = Desk(settings, token, args.demo)
+    server.desk.resume_publications()
     server.desk.refresh_stats()
     print(f'Rhythm Desk: http://{args.bind}:{args.port}', flush=True)
     server.serve_forever()

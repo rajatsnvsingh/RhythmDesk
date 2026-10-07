@@ -116,6 +116,8 @@ flowchart TD
 
 A same-revision successful receipt supports idempotent retries after rechecking published inventory. A different revision or externally changed published album requires administrator investigation.
 
+`POST /api/jobs/{id}/approve` claims the current reviewed revision as Publishing and returns HTTP 202 immediately. A background web task performs validation and reads newline-delimited progress/receipt frames from the isolated publisher socket. Copy progress reports actual completed track files; verification, atomic commit and archive phases are indeterminate. SQLite progress updates drive normal snapshot/detail polling. Pending explicitly approved revisions resume on web startup; snapshot receipt reconciliation schedules work rather than blocking a GET on archival I/O. Archive finalization uses per-job thread locks and POSIX file locks across processes, verifies existing archives against the revision, receipt and retained source, and never replaces an existing archive. Ambiguous transport failures retain Publishing until a receipt can be reconciled; confirmed pre-publication failures return to Curated with an actionable error. Archive failures after a receipt do not trigger another library write.
+
 ## HTTP API map
 
 All API routes require a session except sign-in and session bootstrap. Mutating routes validate origin/host and CSRF. JSON is required unless the upload endpoint specifies binary bytes.

@@ -29,7 +29,9 @@ def rename_no_replace(source, target):
         raise OSError(code, os.strerror(code), str(target))
 
 
-def publish(settings, job_id, expected_revision, approved_by='web'):
+def publish(settings, job_id, expected_revision, approved_by='web', progress=None):
+    def report(phase,message,completed=None,total=None):
+        if progress:progress(dict(phase=phase,message=message,completed=completed,total=total))
     if not job_id.startswith('work.') or Path(job_id).name != job_id:
         raise ValueError('Invalid job ID')
     if len(expected_revision) != 64:
@@ -38,6 +40,7 @@ def publish(settings, job_id, expected_revision, approved_by='web'):
     audit_dir.mkdir(exist_ok=True)
     audit = safe_child(audit_dir, job_id + '.json')
     with LOCK:
+        report('Validating publication','Verifying approved revision, audio checksums and destination')
         # A recorded successful approval is idempotent; no second library write.
         if audit.exists():
             receipt = json.loads(audit.read_text(encoding='utf-8'))
@@ -83,7 +86,16 @@ def publish(settings, job_id, expected_revision, approved_by='web'):
         temporary = Path(tempfile.mkdtemp(prefix='approval-', dir=transfer_root))
         try:
             copy_root = temporary / 'audio'
-            shutil.copytree(audio, copy_root, symlinks=True)
+            completed=0;total=len(record['sha256'])
+            report('Copying approved audio','Copying into publish-staging; library not changed yet',0,total)
+            def copy_file(source,target):
+                nonlocal completed
+                result=shutil.copy2(source,target)
+                completed+=1
+                report('Copying approved audio',Path(source).name,completed,total)
+                return result
+            shutil.copytree(audio, copy_root, symlinks=True,copy_function=copy_file)
+            report('Verifying copied audio','Checking publish-staging against the approved revision')
             if inventory(copy_root) != record['sha256']:
                 raise ValueError('Copy differs from the reviewed audio')
             validate_audio(settings, copy_root)
@@ -95,6 +107,7 @@ def publish(settings, job_id, expected_revision, approved_by='web'):
                 with file.open('r+b') as stream:
                     os.fsync(stream.fileno())
             album.chmod(0o755)
+            report('Committing publication','Atomically adding the approved album; existing albums never replaced')
             rename_no_replace(album, target)
             receipt = {'job_id': job_id, 'revision': expected_revision,
                        'destination': destination.as_posix(), 'approved_at': time.time(),
@@ -136,11 +149,15 @@ def serve(settings):
                     request = json.loads(data.split(b'\n', 1)[0])
                     if request.get('action') != 'approve':
                         raise ValueError('Only an explicit approve action is supported')
-                    result = publish(settings, request['job_id'], request['revision'], 'web administrator')
+                    def progress(value):
+                        try:connection.sendall(json.dumps({'progress':value}).encode()+b'\n')
+                        except OSError:pass  # Finish safely and keep the durable receipt after disconnect.
+                    result = publish(settings, request['job_id'], request['revision'], 'web administrator',progress)
                     response = {'ok': True, 'receipt': result}
                 except Exception as error:
                     response = {'ok': False, 'error': str(error)}
-                connection.sendall(json.dumps(response).encode() + b'\n')
+                try:connection.sendall(json.dumps(response).encode() + b'\n')
+                except OSError:pass
 
 
 def main():

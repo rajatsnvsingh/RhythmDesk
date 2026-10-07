@@ -124,11 +124,109 @@ class PipelineTests(unittest.TestCase):
             if path == source:
                 raise OSError(errno.EXDEV, 'Cross-device link')
             return original_rename(path, target)
-        with patch.object(Path, 'rename', rename):
+        with patch('publisher.rename_no_replace',side_effect=rename):
             desk.finish_approval(job_id, receipt)
         self.assertTrue(source.exists())
         self.assertTrue((self.settings.archive / job_id / 'REVIEW.json').exists())
         self.assertEqual(desk.detail(job_id)['job']['status'], 'Approved')
+
+    def test_concurrent_archive_finalization_is_idempotent(self):
+        import errno
+        desk,detail=self.curate();job=detail['job']['id']
+        receipt=publish(self.settings,job,detail['review']['revision'])
+        source=self.settings.curated/job;rename=Path.rename;copytree=shutil.copytree
+        def move(path,target):
+            if path==source:raise OSError(errno.EXDEV,'Cross-device link')
+            return rename(path,target)
+        def copy(*args,**kwargs):
+            time.sleep(.03);return copytree(*args,**kwargs)
+        errors=[]
+        def finish():
+            try:desk.finish_approval(job,receipt)
+            except Exception as error:errors.append(error)
+        with patch('publisher.rename_no_replace',side_effect=move),patch('server.shutil.copytree',side_effect=copy):
+            threads=[threading.Thread(target=finish) for _ in range(2)]
+            for thread in threads:thread.start()
+            for thread in threads:thread.join(10);self.assertFalse(thread.is_alive())
+        self.assertEqual(errors,[]);self.assertTrue(source.exists())
+        self.assertEqual(list(self.settings.archive.glob('.archive-*')),[])
+        with connect(self.settings) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM events WHERE job_id=? AND message='Explicitly approved and published to Rhythm Attic'",(job,)).fetchone()[0],1)
+
+    def test_existing_different_archive_is_not_replaced(self):
+        desk,detail=self.curate();job=detail['job']['id']
+        receipt=publish(self.settings,job,detail['review']['revision'])
+        archived=self.settings.archive/job;shutil.copytree(self.settings.curated/job,archived)
+        file=next((archived/'audio').rglob('*.flac'));file.write_bytes(b'corrupt')
+        with self.assertRaisesRegex(ValueError,'Archive audio differs'):desk.finish_approval(job,receipt)
+        self.assertEqual(file.read_bytes(),b'corrupt');self.assertTrue((self.settings.curated/job).exists())
+
+    def test_approval_returns_before_background_work_finishes(self):
+        desk,detail=self.curate();job=detail['job']['id']
+        started=threading.Event();release=threading.Event();finished=threading.Event()
+        def slow(*args):started.set();release.wait(5);finished.set()
+        with patch.object(desk,'_publish_background',side_effect=slow):
+            result=desk.approve(job,detail['review']['revision'])
+            self.assertTrue(result['queued']);self.assertTrue(started.wait(2));self.assertFalse(finished.is_set())
+            self.assertEqual(desk.detail(job)['job']['status'],'Publishing')
+            self.assertFalse(desk.schedule_publication(job,detail['review']['revision']))
+            with self.assertRaises(ValueError):desk.approve(job,detail['review']['revision'])
+            release.set();self.assertTrue(finished.wait(2))
+
+    def test_background_progress_frames_finish_publication(self):
+        from unittest.mock import MagicMock
+        from processing import read
+        desk,detail=self.curate();job=detail['job']['id'];rev=detail['review']['revision']
+        with connect(self.settings) as db:db.execute("UPDATE jobs SET status='Publishing' WHERE id=?",(job,))
+        connection=MagicMock();connection.__enter__.return_value=connection
+        def receive(*args):
+            frames=[]
+            receipt=publish(self.settings,job,rev,progress=lambda value:frames.append({'progress':value}))
+            frames.append({'ok':True,'receipt':receipt})
+            return b''.join(json.dumps(frame).encode()+b'\n' for frame in frames)
+        connection.recv.side_effect=receive
+        with patch('server.socket.socket',return_value=connection),patch('server.socket.AF_UNIX',1,create=True),patch.object(desk,'refresh_stats'):
+            desk._publish_background(job,rev)
+        self.assertEqual(desk.detail(job)['job']['status'],'Approved',str(read(self.settings,job)))
+        self.assertEqual(read(self.settings,job)['phase'],'Published')
+
+    def test_snapshot_only_schedules_archive_recovery(self):
+        desk,detail=self.curate();job=detail['job']['id'];rev=detail['review']['revision']
+        publish(self.settings,job,rev)
+        with patch.object(desk,'schedule_publication') as schedule,patch.object(desk,'finish_approval') as finish:
+            desk.snapshot();schedule.assert_called_once_with(job,rev);finish.assert_not_called()
+
+    def test_ambiguous_publication_disconnect_keeps_approval_claimed(self):
+        from unittest.mock import MagicMock
+        desk,detail=self.curate();job=detail['job']['id'];rev=detail['review']['revision']
+        with connect(self.settings) as db:db.execute("UPDATE jobs SET status='Publishing' WHERE id=?",(job,))
+        connection=MagicMock();connection.__enter__.return_value=connection;connection.recv.return_value=b''
+        with patch('server.socket.socket',return_value=connection),patch('server.socket.AF_UNIX',1,create=True):
+            desk._publish_background(job,rev)
+        detail=desk.detail(job)
+        self.assertEqual(detail['job']['status'],'Publishing')
+        self.assertIn('outcome needs attention',detail['job']['reason'])
+        self.assertFalse(detail['readiness']['can_publish'])
+        self.assertEqual(list(self.settings.library.iterdir()),[])
+
+    def test_prepublication_failure_is_visible_and_retains_curated_copy(self):
+        from unittest.mock import MagicMock
+        desk,detail=self.curate();job=detail['job']['id'];rev=detail['review']['revision']
+        with connect(self.settings) as db:db.execute("UPDATE jobs SET status='Publishing' WHERE id=?",(job,))
+        connection=MagicMock();connection.__enter__.return_value=connection;connection.connect.side_effect=OSError('Publisher unavailable')
+        with patch('server.socket.socket',return_value=connection),patch('server.socket.AF_UNIX',1,create=True):
+            desk._publish_background(job,rev)
+        detail=desk.detail(job)
+        self.assertEqual(detail['job']['status'],'Curated')
+        self.assertIn('Publication failed: Publisher unavailable',detail['job']['reason'])
+        self.assertTrue((self.settings.curated/job/'audio').exists())
+
+    def test_startup_resumes_only_previously_authorized_publications(self):
+        desk,detail=self.curate();job=detail['job']['id'];rev=detail['review']['revision']
+        with patch.object(desk,'schedule_publication') as schedule:
+            desk.resume_publications();schedule.assert_not_called()
+            with connect(self.settings) as db:db.execute("UPDATE jobs SET status='Publishing' WHERE id=?",(job,))
+            desk.resume_publications();schedule.assert_called_once_with(job,rev)
 
     def test_flexible_intake_short_boundary_duplicates_and_idempotency(self):
         incoming = self.settings.incoming
@@ -184,7 +282,12 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'already exists'):
             publish(self.settings, clone_id, reviewed)
         self.assertEqual(inventory(target), before)
-        snapshot = desk.snapshot()
+        with patch.object(desk,'refresh_stats'):
+            desk.snapshot()
+            deadline=time.monotonic()+5
+            while desk.publications and time.monotonic()<deadline:time.sleep(.02)
+            self.assertFalse(desk.publications)
+            snapshot = desk.snapshot()
         self.assertEqual(snapshot['job_counts']['Approved'], 1)
         self.assertTrue((self.settings.archive / job_id / 'originals').is_dir())
         self.assertEqual(inventory(target), before)

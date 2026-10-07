@@ -117,6 +117,8 @@ Allow-list matching ignores case. Category tags are user-facing labels stored in
 
 Choose **Review publication**, verify the destination and track count, acknowledge the confirmation and approve the exact reviewed revision. The nearby readiness checklist explains blocked approval, including unknown labels, unsaved edits, an existing destination and publisher availability. Only explicit approval asks the publisher to copy the release into Rhythm Attic. After success, **Review next** opens the next decision.
 
+Approval queues publication in the background and closes the confirmation immediately. You can close the inspector, navigate elsewhere, or curate another release. Home, the review queue and the inspector show validation, track-copy counts, copied-audio verification, atomic commit and archive finalization. Phases without measurable totals use an indeterminate indicator rather than an invented percentage. Refreshing the browser does not cancel publication; explicitly approved pending revisions are recovered after a web-service restart. Archive finalization is serialized and existing archives must match the approved revision. If archiving needs attention after publication, the library is not republished or overwritten; the receipt and retained working copy remain available for recovery.
+
 If that destination already exists, publication is blocked. There is no overwrite/replace option. Changed audio or a stale revision also blocks publication. A successful publication records an audit receipt; repeating that successful approval is idempotent.
 
 Completed work is archived under state/processed. Curation is copy-based; don't assume Incoming has been emptied after approval.
