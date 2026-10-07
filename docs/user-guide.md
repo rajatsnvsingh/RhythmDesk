@@ -87,6 +87,12 @@ Expand **Matching log & technical record** and click **Copy log** to share the d
 
 To discard one unpublished release, open its inspector and choose **Delete release from staging…**. Review the file count and size, check the permanent-deletion confirmation and click **Delete from staging**. This removes that release’s assigned Incoming originals and its Curated/Needs review working copies, including retained retry copies. Unrelated files (including unassigned covers), published music, state archives and other releases are not deleted. Changed originals, shared files, active jobs and unsafe paths block deletion. The worker is coordinated automatically; no manual stop is needed. This operation cannot be undone.
 
+### Remove bonus or alternate songs
+
+In a **Curated** album, click **Remove** beside a song, or select several rows and click **Remove selected songs…**. Review the song list, check the confirmation and remove them from the prepared copy. Save any metadata edits first, or discard them when prompted. The inspector stays open with the remaining songs.
+
+Incoming originals, recovery copies and published library music are untouched. Remaining songs keep their existing disc/track numbers and audio bytes. A complete album becomes **partial**, and the new revision requires fresh publication approval. Unverified songs that remain still need individual confirmation. At least one song must remain; use **Delete release from staging…** for an entire release. Removal does not permanently purge the source files; staging cleanup is separate. Regrouping the original sources can bring the excluded songs back.
+
 ## 6. Curate manually
 
 ![Manual metadata and artwork](assets/screenshots/manual-curation.jpg)

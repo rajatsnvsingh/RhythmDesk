@@ -1,5 +1,24 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const app=fs.readFileSync(path.join(__dirname,'../app/static/app.js'),'utf8');
+const review=fs.readFileSync(path.join(__dirname,'../app/static/review-tools.js'),'utf8');
+function removalSetup(){
+  const box={hidden:true,innerHTML:'',scrollIntoView(){}},messages=[];
+  const detail={job:{status:'Curated'},review:{revision:'exact-revision',tracks:[{file:'01.flac',title:'Original',disc:1,track:1},{file:'02.flac',title:'Alternate',disc:1,track:2}]}};
+  const ctx=vm.createContext({detail,songRemoval:null,$:()=>box,esc:String,feedback:m=>messages.push(m)});
+  const start=review.indexOf('function confirmSongRemoval('),end=review.indexOf('function candidateCard(',start);
+  vm.runInContext(review.slice(start,end),ctx);
+  return {ctx,box,messages,run:indexes=>ctx.confirmSongRemoval(indexes)};
+}
+test('song removal preview captures exact prepared revision and filenames, with checkbox consent',()=>{
+  const s=removalSetup();s.run([1]);assert.equal(s.ctx.songRemoval.revision,'exact-revision');assert.deepEqual(Array.from(s.ctx.songRemoval.files),['02.flac']);
+  assert.match(s.box.innerHTML,/Alternate/);assert.match(s.box.innerHTML,/remove-songs-check/);assert.match(s.box.innerHTML,/disabled>Remove songs/);assert.match(s.box.innerHTML,/Incoming originals/);assert.equal(s.box.hidden,false);
+});
+test('song removal preview rejects empty selection and removing the last song',()=>{
+  const s=removalSetup();s.run([]);s.run([0,1]);assert.equal(s.ctx.songRemoval,null);assert.equal(s.messages.length,2);assert.match(s.messages[1],/Keep at least one song/);
+});
+test('published album has no song removal preview',()=>{
+  const s=removalSetup();s.ctx.detail.job.status='Approved';s.run([1]);assert.equal(s.ctx.songRemoval,null);assert.equal(s.box.hidden,true);
+});
 const stable=app.slice(app.indexOf('const renderedHTML='),app.indexOf('function cover('));
 function image(src){return {dataset:{artKey:'release'},alt:'Cover',getAttribute(){return src;},replaceWith(old){this.replacement=old;}};}
 test('unchanged polling does not recreate cover DOM; changed neighbours reuse cover',()=>{

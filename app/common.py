@@ -148,6 +148,8 @@ def revision(record):
     values = {key: record[key] for key in ('destination', 'sha256', 'tracks')}
     if 'mode' in record:
         values['mode'] = record['mode']
+    if 'excluded_tracks' in record:
+        values['excluded_tracks'] = record['excluded_tracks']
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
 
 

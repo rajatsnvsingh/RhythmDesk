@@ -292,7 +292,20 @@ class Desk:
             db.execute("UPDATE tracks SET status='Unresolved',job_id=NULL,reason='Released from previous group; select tracks and assign a release',updated=? WHERE job_id=?", (time.time(), job_id))
         event(self.settings, 'Returned tracks to intake for manual regrouping; working copies retained', job_id)
 
-    def edit(self, job_id, data):
+    def remove_tracks(self, job_id, data):
+        """Exclude explicitly selected songs from the prepared copy, never the library."""
+        if data.get('confirmation') is not True:
+            raise ValueError('Confirm removal from the prepared album first')
+        files = data.get('files')
+        if not isinstance(files, list) or not files or not all(isinstance(f, str) for f in files) or len(set(files)) != len(files):
+            raise ValueError('Select unique prepared song filenames')
+        record = json.loads((safe_child(self.settings.curated, job_id) / 'REVIEW.json').read_text(encoding='utf-8'))
+        first = record['tracks'][0]
+        payload = dict(revision=data.get('revision'), artist=first['albumartist'], album=first['album'],
+                       year=first['year'], tracks=[dict(t) for t in record['tracks']])
+        self.edit(job_id, payload, remove_files=set(files))
+
+    def edit(self, job_id, data, remove_files=None):
         from mediafile import MediaFile
         from manual import cover
         replacement = cover(data.get('artwork'))
@@ -308,6 +321,15 @@ class Desk:
         swapped = False
         try:
             record = json.loads((folder / 'REVIEW.json').read_text(encoding='utf-8'))
+            if remove_files is not None:
+                from common import inventory, revision
+                names = {t['file'] for t in record['tracks']}
+                if not remove_files <= names:
+                    raise ValueError('Selected song is not in this reviewed album')
+                if len(remove_files) >= len(names):
+                    raise ValueError('Keep at least one song. Use Delete release to remove the entire album.')
+                if record['revision'] != data['revision'] or revision(record) != data['revision'] or inventory(folder / 'audio') != record['sha256']:
+                    raise ValueError('The prepared audio changed. Reload before removing songs.')
             audio = temporary / 'audio'
             shutil.copytree(folder / 'audio', audio, symlinks=True)
             artist = clean_name(data['artist'])
@@ -318,9 +340,17 @@ class Desk:
             edits = data.get('tracks', [])
             if len(edits) != len(record['tracks']):
                 raise ValueError('Edit must include every reviewed track')
+            pairs = list(zip(record['tracks'], edits))
+            if remove_files is not None:
+                for name in remove_files:
+                    safe_child(audio, name).unlink()
+                pairs = [(original, edit) for original, edit in pairs if original['file'] not in remove_files]
             for original, edit in zip(record['tracks'], edits):
                 if edit.get('file') != original['file']:
                     raise ValueError('Track order changed; reload first')
+            for original, edit in pairs:
+                if remove_files is not None:
+                    continue  # Remaining songs retain their exact audio bytes and tag positions.
                 media = MediaFile(safe_child(audio, original['file']))
                 if replacement:
                     from mediafile import Image, ImageType
@@ -337,11 +367,12 @@ class Desk:
                 if not media.artist or not media.title or media.track < 1 or media.disc < 1:
                     raise ValueError('Track artist, title and positive disc/track numbers are required')
                 media.save()
-            normalize_output(audio)
-            new_record = review_record(audio, len(edits))
-            if record.get('mode') in ('manual','partial'):
+            if remove_files is None:
+                normalize_output(audio)
+            new_record = review_record(audio, len(pairs))
+            if record.get('mode') in ('manual','partial') or remove_files is not None:
                 identities={}
-                for original,edit in zip(record['tracks'],edits):
+                for original,edit in pairs:
                     evidence={key:original[key] for key in ('source_id','match_status','match_note') if key in original}
                     if original.get('match_status')=='unverified' and edit.get('reviewed') is True:
                         evidence['match_status']='user-confirmed'
@@ -350,10 +381,15 @@ class Desk:
                 for track in new_record['tracks']:
                     track.update(identities.get((track['disc'],track['track']),{}))
             if 'selected_candidate' in record:new_record['selected_candidate']=record['selected_candidate']
-            if 'mode' in record:
-                from common import revision
-                new_record['mode'] = record['mode']
-                new_record['revision'] = revision(new_record)
+            excluded = list(record.get('excluded_tracks', []))
+            if remove_files is not None:
+                excluded.extend(dict(t, excluded_at=time.time()) for t in record['tracks'] if t['file'] in remove_files)
+            if excluded:
+                new_record['excluded_tracks'] = excluded
+            mode = record.get('mode', row['mode'])
+            new_record['mode'] = 'partial' if remove_files is not None and mode == 'album' else mode
+            from common import revision
+            new_record['revision'] = revision(new_record)
             history = folder / ('audio-before-' + secrets.token_hex(4))
             (folder / 'audio').rename(history)
             try:
@@ -366,9 +402,11 @@ class Desk:
                 history.rename(folder / 'audio')
                 raise
             with connect(self.settings) as db:
-                db.execute("UPDATE jobs SET status='Curated',artist=?,album=?,year=?,revision=?,destination=?,updated=? WHERE id=?",
-                           (artist, album, year, new_record['revision'], new_record['destination'], time.time(), job_id))
-            event(self.settings, 'Tags edited. New audio revision requires fresh approval.', job_id)
+                db.execute("UPDATE jobs SET status='Curated',artist=?,album=?,year=?,track_count=?,mode=?,revision=?,destination=?,reason=?,updated=? WHERE id=?",
+                           (artist, album, year, len(pairs), new_record.get('mode', row['mode']), new_record['revision'], new_record['destination'],
+                            'Prepared songs removed; originals retained. Review the remaining album.' if remove_files is not None else row['reason'], time.time(), job_id))
+            event(self.settings, ('Removed from prepared album: ' + '; '.join(t['title'] for t in record['tracks'] if t['file'] in remove_files) + '. Originals retained. Fresh approval required.')
+                  if remove_files is not None else 'Tags edited. New audio revision requires fresh approval.', job_id)
         finally:
             shutil.rmtree(temporary)
             if not swapped:
@@ -809,6 +847,9 @@ class Handler(BaseHTTPRequestHandler):
                     self.json(delete_release(self.desk.settings,job_id,data.get('confirmation'),data.get('token')))
                 elif action == 'edit':
                     self.desk.edit(job_id, data)
+                    self.json({'ok': True})
+                elif action == 'remove-tracks':
+                    self.desk.remove_tracks(job_id, data)
                     self.json({'ok': True})
                 elif action == 'approve':
                     self.json(self.desk.approve(job_id, data['revision']),202)
