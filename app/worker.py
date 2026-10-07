@@ -191,7 +191,7 @@ def artwork_config(settings, folder, work, force=False):
 
 def import_arguments(mode, release_id, work):
     arguments=['import','-q','--copy','--nomove']
-    if mode in ('single','partial'):
+    if mode=='single' or (mode=='partial' and not release_id):
         arguments.append('-s')
     elif release_id:
         arguments.extend(['--search-id',release_id])
@@ -289,10 +289,10 @@ def process_job(settings, job_id):
             config['plugins']=list(dict.fromkeys([*plugins,'rhythm_candidates']))
             config['pluginpath']=[str(Path(__file__).resolve().parent)]
             config['rhythm_candidates']={'output':str(folder/'CANDIDATES.json'),
-                                        'selected':selected_candidate}
+                                        'selected':selected_candidate,'mode':job['mode']}
             atomic_json(effective_config,config)
-            if selected_candidate and (job['mode']!='album' or selected_candidate!=job['release_id']):
-                raise ValueError('Candidate selection must identify the chosen complete album')
+            if selected_candidate and (job['mode'] not in ('album','partial') or selected_candidate!=job['release_id']):
+                raise ValueError('Candidate selection must identify the chosen album edition')
             event(settings, 'All source tracks have artwork: keeping embedded covers; fetching disabled' if complete_art
                   else 'Some source tracks lack artwork: fetched cover will update every track in the release', job_id)
             command = [executable, '-vv', '-c', str(effective_config), '-l', str(folder / 'beets.db'),
@@ -319,11 +319,20 @@ def process_job(settings, job_id):
                         process.kill();process.wait()
         if len(inventory(audio)) != len(rows):
             raise ValueError('Match skipped or incomplete: read the Beets log and correct the release')
-        if job['mode'] in ('single','partial'):
+        if job['mode']=='single' or (job['mode']=='partial' and not job['release_id']):
             update(settings,job_id,'Resolving release','Checking recording-to-release membership')
             from trackmatch import resolve_release
             from metadata_clean import clean
             resolve_release([audio / name for name in inventory(audio)],clean(job['album']),job['release_id'])
+        elif job['mode']=='partial':
+            # Exact-edition album matching already verified track-to-release
+            # membership and positions. Do not redo unconstrained singleton searches.
+            media=[MediaFile(audio/name) for name in inventory(audio)]
+            if any(m.mb_albumid!=job['release_id'] for m in media):
+                raise ValueError('Partial output does not belong to the selected edition')
+            positions=[(m.disc or 1,m.track) for m in media]
+            if len(set(positions))!=len(positions):
+                raise ValueError('Partial output has repeated track positions; needs review')
         update(settings,job_id,'Renaming','Creating clean, numbered filenames')
         normalize_output(audio)
         update(settings,job_id,'Validating','Verifying tags, track count, artwork and review revision')

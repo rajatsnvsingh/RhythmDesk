@@ -25,6 +25,7 @@ class CandidatesTests(unittest.TestCase):
         self.plugin=RhythmCandidatesPlugin()
         self.plugin.config['output']=str(self.folder/'CANDIDATES.json')
         self.plugin.config['selected']=''
+        self.plugin.config['mode']='album'
         self.task=SimpleNamespace(is_album=True,candidates=[self.match],choice=None)
         self.task.set_choice=lambda choice:setattr(self.task,'choice',choice)
 
@@ -43,7 +44,7 @@ class CandidatesTests(unittest.TestCase):
         self.plugin.choose(None,self.task)
         self.assertIs(self.task.choice,self.match)
         self.match.extra_tracks=[object()]
-        with self.assertRaisesRegex(ValueError,'missing or unmatched'):
+        with self.assertRaisesRegex(ValueError,'incomplete'):
             self.plugin.choose(None,self.task)
         self.match.extra_tracks=[]
         self.plugin.config['selected']='absent'
@@ -64,11 +65,40 @@ class CandidatesTests(unittest.TestCase):
         self.assertFalse(options.move)
         self.assertEqual(paths,[str(self.folder/'input')])
         self.assertNotIn('-m',arguments)
-        for mode in ('single','partial'):
+        for mode in ('album','partial'):
             options,paths=import_cmd.parser.parse_args(import_arguments(mode,ID,self.folder/'input')[1:])
+            self.assertFalse(options.singletons)
+            self.assertEqual(options.search_ids,[ID])
+            self.assertFalse(options.move)
+        for mode,release_id in [('single',ID),('partial','')]:
+            options,paths=import_cmd.parser.parse_args(import_arguments(mode,release_id,self.folder/'input')[1:])
             self.assertTrue(options.singletons)
             self.assertFalse(options.search_ids)
             self.assertFalse(options.move)
+
+    def test_selected_partial_allows_missing_catalogue_not_unmatched_sources(self):
+        self.plugin.config['selected']=ID
+        self.plugin.config['mode']='partial'
+        self.match.extra_tracks=[object(),object()]
+        self.plugin.choose(None,self.task)
+        self.assertIs(self.task.choice,self.match)
+        self.match.extra_items=[object()]
+        with self.assertRaisesRegex(ValueError,'unmatched source'):
+            self.plugin.choose(None,self.task)
+
+    def test_retry_selected_partial_keeps_mode_and_rejects_complete(self):
+        settings=Settings(self.folder);settings.initialize()
+        with connect(settings) as db:
+            db.execute("INSERT INTO jobs(id,status,artist,album,year,track_count,mode,release_id,reason,updated) VALUES('job','Needs review','Eminem','Recovery',2010,1,'album','','',0)")
+        folder=settings.review/'job';folder.mkdir()
+        atomic_json(folder/'CANDIDATES.json',[dict(release_id=ID,missing=16,unmatched=0)])
+        desk=Desk(settings,'test-token')
+        with self.assertRaises(ValueError):desk.retry('job',ID,mode='album',selected_candidate=ID)
+        desk.retry('job',ID,mode='partial',selected_candidate=ID)
+        with connect(settings) as db:
+            job=db.execute("SELECT * FROM jobs WHERE id='job'").fetchone()
+            self.assertEqual(job['mode'],'partial');self.assertEqual(job['status'],'Queued')
+        self.assertFalse(settings.library.exists())
 
     def test_retry_rejects_unlisted_candidate_and_only_queues(self):
         settings=Settings(self.folder);settings.initialize()

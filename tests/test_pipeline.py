@@ -39,6 +39,24 @@ class PipelineTests(unittest.TestCase):
         self.env.stop()
         self.temp.cleanup()
 
+    def test_partial_exact_edition_preserves_gaps_without_singleton_resolution(self):
+        from mediafile import MediaFile
+        edition='65085f39-6482-44fd-8c34-a266475bedeb'
+        for position in (2,7):
+            source=track(self.settings.incoming/f'{position}.flac',number=position,title=f'Track {position}')
+            media=MediaFile(source);media.mb_albumid=edition;media.tracktotal=17;media.save()
+        scan(self.settings)
+        with connect(self.settings) as db:ids=[r['id'] for r in db.execute('SELECT id FROM tracks')]
+        job=create_job(self.settings,ids,mode='partial',release_id=edition)
+        with patch('trackmatch.resolve_release',side_effect=AssertionError('Must not rematch edition as singletons')):
+            process_job(self.settings,job)
+        with connect(self.settings) as db:self.assertEqual(db.execute('SELECT status FROM jobs WHERE id=?',(job,)).fetchone()[0],'Curated')
+        record=json.loads((self.settings.curated/job/'REVIEW.json').read_text())
+        self.assertEqual(sorted(t['track'] for t in record['tracks']),[2,7])
+        self.assertEqual(record['mode'],'partial')
+        self.assertEqual(len(list(self.settings.incoming.glob('*.flac'))),2)
+        self.assertEqual(list(self.settings.library.iterdir()),[])
+
     def test_matching_cleans_website_tags_only_in_copies(self):
         from mediafile import MediaFile
         source=track(self.settings.incoming/'vendor.flac',album='Signals [songs.pk]',title='First Light - MP3Khan.Com')

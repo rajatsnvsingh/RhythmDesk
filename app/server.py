@@ -143,7 +143,7 @@ class Desk:
                     job['reason'] = '\n'.join(filter(None,[failure,'Unapproved genres/tags: '+json.dumps(found) if any(found.values()) else '']))
                 cover = next((t for t in record['tracks'] if t.get('artwork')), None)
                 if cover:
-                    job['cover_url'] = '/api/media?' + urlencode(dict(job=job['id'],file=cover['file'],art=1))
+                    job['cover_url'] = '/api/media?' + urlencode(dict(job=job['id'],file=cover['file'],art=1,v=record.get('revision','')))
             job['readiness'] = readiness(job, record, found, job['destination_exists'], publisher, self.demo)
             job['recovery'] = recovery(job)
             job['identity'] = release_identity(job, record)
@@ -235,14 +235,14 @@ class Desk:
                 raise ValueError('Only Needs review jobs can be retried')
             mode = mode or job['mode']
             if selected_candidate:
-                if mode!='album' or selected_candidate!=release_id:
-                    raise ValueError('Choose a complete-album candidate')
+                if mode not in ('album','partial') or selected_candidate!=release_id:
+                    raise ValueError('Choose an album edition in album or partial mode')
                 from rhythm_candidates import read_candidates
                 folder=self.job_folder(dict(job))
                 log=folder/'BEETS.log'
                 candidates=read_candidates(folder,log.read_text(encoding='utf-8') if log.exists() else '')
                 candidate=next((c for c in candidates if c['release_id']==selected_candidate),None)
-                if not candidate or candidate.get('missing') or candidate.get('unmatched'):
+                if not candidate or candidate.get('unmatched') or (mode=='album' and candidate.get('missing')):
                     raise ValueError('Candidate unavailable or incomplete; refresh the inspector')
             db.execute('DELETE FROM meta WHERE key=?',('candidate:'+job_id,))
             if selected_candidate:
@@ -254,6 +254,28 @@ class Desk:
             db.execute("UPDATE jobs SET status='Queued',release_id=?,reason='',updated=? WHERE id=?", (release_id or job['release_id'], time.time(), job_id))
             db.execute('INSERT OR REPLACE INTO meta VALUES(?,?)', ('force_artwork:' + job_id, json.dumps(force_artwork)))
         event(self.settings, 'Retry queued with the chosen release', job_id)
+
+    def batch_preview(self,action,job_ids):
+        if action not in ('publish','delete') or not isinstance(job_ids,list) or not 1<=len(job_ids)<=50 or any(not isinstance(id,str) for id in job_ids) or len(set(job_ids))!=len(job_ids):
+            raise ValueError('Select 1–50 unique releases and a valid batch action')
+        ready=[];blocked=[];destinations=set()
+        for job_id in job_ids:
+            try:
+                if action=='delete':
+                    from staging import preview_release
+                    plan=preview_release(self.settings,job_id)
+                    ready.append(plan)
+                else:
+                    detail=self.detail(job_id);job=detail['job']
+                    if not detail['readiness']['can_publish']:
+                        raise ValueError('; '.join(b['message'] for b in detail['readiness']['blockers']))
+                    if job['destination'] in destinations:
+                        raise ValueError('Another selected release has the same destination')
+                    destinations.add(job['destination'])
+                    ready.append(dict(job_id=job_id,artist=job['artist'],album=job['album'],revision=job['revision'],destination=job['destination'],tracks=job['track_count']))
+            except (ValueError,OSError) as error:
+                blocked.append(dict(job_id=job_id,reason=str(error)))
+        return dict(action=action,ready=ready,blocked=blocked)
 
     def ungroup(self, job_id):
         with connect(self.settings) as db:
@@ -580,7 +602,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(payload)
                 return
-            if url.path in ('/', '/app.js', '/style.css', '/settings.js', '/settings.css', '/review-tools.js', '/drawer.js', '/mobile.css', '/archive.css', '/model.js'):
+            if url.path in ('/', '/app.js', '/style.css', '/settings.js', '/settings.css', '/review-tools.js', '/batch.js', '/drawer.js', '/mobile.css', '/archive.css', '/model.js'):
                 file = STATIC / ('index.html' if url.path == '/' else url.path[1:])
                 self.send_file(file)
                 return
@@ -755,6 +777,8 @@ class Handler(BaseHTTPRequestHandler):
                 with self.desk.session_lock:
                     self.desk.revoke_session(cookie['rhythm_session'].value)
                 self.json({'ok': True}, cookie='rhythm_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0')
+            elif self.path == '/api/jobs/batch-preview':
+                self.json(self.desk.batch_preview(data.get('action'),data.get('job_ids')))
             elif self.path.startswith('/api/jobs/'):
                 parts = self.path.split('/')
                 job_id, action = unquote(parts[3]), parts[4]

@@ -33,6 +33,7 @@ def read_candidates(folder, log=''):
 class RhythmCandidatesPlugin(BeetsPlugin):
     def __init__(self):
         super().__init__()
+        self.config.add({'mode':'album'})
         self.register_listener('import_task_choice', self.choose)
 
     def choose(self, session, task):
@@ -50,7 +51,10 @@ class RhythmCandidatesPlugin(BeetsPlugin):
         match = next((m for m in candidates if m.info.album_id == selected), None)
         if match is None:
             raise ValueError('Chosen candidate was not returned by MusicBrainz; retry the search')
-        if match.extra_tracks or match.extra_items:
-            raise ValueError('Chosen complete album has missing or unmatched tracks; use partial or manual mode')
+        mode=self.config['mode'].get(str)
+        if mode not in ('album','partial'):
+            raise ValueError('Candidate selection requires album or partial mode')
+        if match.extra_items or (mode=='album' and match.extra_tracks):
+            raise ValueError('Chosen edition has unmatched source tracks or is incomplete in complete-album mode; use partial or manual mode')
         task.set_choice(match)
         self._log.info('User selected MusicBrainz edition {}; preparing review only', selected)
