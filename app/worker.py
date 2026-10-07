@@ -238,6 +238,8 @@ def process_job(settings, job_id):
         candidates_path=folder/'CANDIDATES.json'
         if candidates_path.exists():
             candidates_path.unlink()
+        partial_map=folder/'PARTIAL-MAP.json'
+        if partial_map.exists():partial_map.unlink()
         for index, row in enumerate(rows, 1):
             source = safe_child(settings.incoming, row['path'])
             if sha256(source) != row['sha256']:
@@ -317,26 +319,25 @@ def process_job(settings, job_id):
                 finally:
                     if process.poll() is None:
                         process.kill();process.wait()
+        partial_identities={}
+        if job['mode']=='partial':
+            from partial import prepare
+            from trackmatch import resolve_release
+            update(settings,job_id,'Preparing partial review','Keeping catalogue matches and retaining unresolved original tracks')
+            partial_identities=prepare(folder,job,rows,resolve_release,force_artwork)
         if len(inventory(audio)) != len(rows):
             raise ValueError('Match skipped or incomplete: read the Beets log and correct the release')
-        if job['mode']=='single' or (job['mode']=='partial' and not job['release_id']):
+        if job['mode']=='single':
             update(settings,job_id,'Resolving release','Checking recording-to-release membership')
             from trackmatch import resolve_release
             from metadata_clean import clean
             resolve_release([audio / name for name in inventory(audio)],clean(job['album']),job['release_id'])
-        elif job['mode']=='partial':
-            # Exact-edition album matching already verified track-to-release
-            # membership and positions. Do not redo unconstrained singleton searches.
-            media=[MediaFile(audio/name) for name in inventory(audio)]
-            if any(m.mb_albumid!=job['release_id'] for m in media):
-                raise ValueError('Partial output does not belong to the selected edition')
-            positions=[(m.disc or 1,m.track) for m in media]
-            if len(set(positions))!=len(positions):
-                raise ValueError('Partial output has repeated track positions; needs review')
         update(settings,job_id,'Renaming','Creating clean, numbered filenames')
         normalize_output(audio)
         update(settings,job_id,'Validating','Verifying tags, track count, artwork and review revision')
         record = review_record(audio, len(rows))
+        if partial_identities:
+            for track in record['tracks']:track.update(partial_identities[(track['disc'],track['track'])])
         if job['mode']=='manual':
             identities={(edit['disc'],edit['track']):edit['id'] for edit in manual_payload['tracks']}
             for track in record['tracks']:

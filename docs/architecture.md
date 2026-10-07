@@ -84,7 +84,7 @@ stateDiagram-v2
 1. A user-requested Scan fingerprints inspected files by size/mtime and, for readable audio, SHA-256. Repeated scans of unchanged input are skipped; there is no intake settling timer.
 2. Grouping uses source metadata, or an explicit user selection. One worker claims queued jobs transactionally.
 3. Verify original checksums and copy into per-job originals/input directories. Never tag the incoming original.
-4. Automatic mode cleans website watermarks in input tags and runs strict Beets matching. Single/partial modes resolve matched recordings to an intended release. Manual mode applies user metadata without catalogue queries.
+4. Automatic mode cleans website watermarks and runs strict Beets matching. Single resolves recording membership. Partial retains catalogue mappings and all unresolved originals in one reviewable copy; unresolved songs require saved per-track confirmation before publication. Manual applies user metadata without catalogue queries.
 5. Normalize filenames, validate output count and required tags, and calculate a review revision over destination, hashes and track metadata (including mode).
 6. Move the completed working directory to Curated. Report unknown labels, then wait.
 

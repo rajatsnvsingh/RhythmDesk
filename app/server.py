@@ -242,7 +242,7 @@ class Desk:
                 log=folder/'BEETS.log'
                 candidates=read_candidates(folder,log.read_text(encoding='utf-8') if log.exists() else '')
                 candidate=next((c for c in candidates if c['release_id']==selected_candidate),None)
-                if not candidate or candidate.get('unmatched') or (mode=='album' and candidate.get('missing')):
+                if not candidate or (mode=='album' and (candidate.get('missing') or candidate.get('unmatched'))):
                     raise ValueError('Candidate unavailable or incomplete; refresh the inspector')
             db.execute('DELETE FROM meta WHERE key=?',('candidate:'+job_id,))
             if selected_candidate:
@@ -339,11 +339,17 @@ class Desk:
                 media.save()
             normalize_output(audio)
             new_record = review_record(audio, len(edits))
-            if record.get('mode')=='manual':
-                identities={(int(edit['disc']),int(edit['track'])):original.get('source_id') for original,edit in zip(record['tracks'],edits)}
+            if record.get('mode') in ('manual','partial'):
+                identities={}
+                for original,edit in zip(record['tracks'],edits):
+                    evidence={key:original[key] for key in ('source_id','match_status','match_note') if key in original}
+                    if original.get('match_status')=='unverified' and edit.get('reviewed') is True:
+                        evidence['match_status']='user-confirmed'
+                        evidence['match_note']='Track metadata and position explicitly checked by user.'
+                    identities[(int(edit['disc']),int(edit['track']))]=evidence
                 for track in new_record['tracks']:
-                    source_id=identities.get((track['disc'],track['track']))
-                    if source_id:track['source_id']=source_id
+                    track.update(identities.get((track['disc'],track['track']),{}))
+            if 'selected_candidate' in record:new_record['selected_candidate']=record['selected_candidate']
             if 'mode' in record:
                 from common import revision
                 new_record['mode'] = record['mode']
@@ -470,6 +476,9 @@ class Desk:
             job = db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
             if not job or job['status'] != 'Curated' or job['revision'] != reviewed_revision:
                 raise ValueError('Album changed or is not Curated. Reload and review again.')
+            record=json.loads((safe_child(self.settings.curated,job_id)/'REVIEW.json').read_text(encoding='utf-8'))
+            from common import validate_track_review
+            validate_track_review(record)
             db.execute("UPDATE jobs SET status='Publishing',reason='',updated=? WHERE id=?", (time.time(), job_id))
         from processing import update
         update(self.settings,job_id,'Publication queued','Explicit approval received; publication will run in the background',started=time.time())

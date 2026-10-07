@@ -60,10 +60,10 @@ Unidentified tracks stay Unresolved. Incoming defaults to **Needs organization**
 | Auto | You want the normal default | One file selects Single; multiple files select Complete album |
 | Complete album | You believe you have a whole release | Strict Beets matching and import of every submitted eligible track |
 | Single track | You have exactly one song | Recording match plus unambiguous/selected release membership |
-| Partial album | You intentionally have only part of a release | Every submitted recording matches and belongs to the intended release |
+| Partial album | You have a subset or imperfect catalogue matches | All songs are retained; unresolved track metadata requires individual saved user confirmation before publication |
 | Manual metadata | Catalogue matching cannot represent your release | You supply valid metadata for every submitted track; no completeness certification |
 
-“Found 5 candidates” means five possible catalogue matches, not five imported songs. If submitted tracks are skipped, the release remains Needs review: the app does not silently publish a successful subset.
+“Found 5 candidates” means five possible catalogue matches, not five imported songs. Complete mode requires all submitted songs to match. Partial retains successful matches and unresolved songs with original track metadata, clearly marked unverified. No source song is silently dropped.
 
 Website addresses such as `songs.pk`, `MP3Khan.com` and `djpunjab.com` are cleaned from working-copy title, album and artist fields before automatic matching. Original metadata is retained. The cleaner does not relax confidence thresholds or guarantee a match.
 
@@ -71,7 +71,7 @@ Website addresses such as `songs.pk`, `MP3Khan.com` and `djpunjab.com` are clean
 
 Open **Inspect** and read the visible failure explanation and recovery options. Confirm the source tracks really belong together. You can retry with a different mode or an exact MusicBrainz release UUID when you know the edition; an external MusicBrainz search link is provided. Retry stays in the inspector and displays queued/processing state. Raw logs remain optional technical evidence; candidate counts are never shown as matched-track counts.
 
-**Review catalogue candidates** displays the editions Beets considered, their match distances (lower is closer), edition details and catalogue track lists. Inspect the linked MusicBrainz edition, choose **Complete album** or **Partial album**, check the confirmation box, then choose **Use this edition**. This explicitly permits preparing that candidate even when it missed the automatic confidence threshold; it does not approve publication. Missing catalogue tracks block Complete but are expected in Partial. Unmatched submitted tracks block both: no successful subset is silently kept. With a selected edition, Partial matches the collection against that release as an album, preserving its disc/track positions rather than doing unrelated single-song searches. Completeness is not certified for partial collections. Review the resulting tags and artwork, resolve unknown labels, and approve separately. Older jobs can show IDs and distances from their saved log; retry to collect richer edition details.
+**Review catalogue candidates** shows edition details, distances and track lists. Inspect the edition, choose Complete or Partial, confirm and choose **Use this edition**. This permits preparation outside the automatic threshold, never publication. Missing catalogue tracks and unresolved source songs block Complete, not Partial preparation. Partial keeps catalogue mappings and retains unresolved original titles/artists without false catalogue IDs. Even zero matches produce a reviewable copy. Check each **Unverified** song's metadata, album context and disc/track position; correct it if needed, check its individual confirmation box and **Save changes**. Duplicate numbering receives clearly flagged provisional free positions. User-confirmed metadata stays distinct from catalogue-mapped metadata. Web approval, batch publication and the isolated publisher all reject unresolved songs. Completeness is not certified; resolve unknown labels and approve the exact saved revision separately.
 
 ### Batch actions on the desk
 
@@ -152,7 +152,7 @@ Settings shows effective Docker paths, runtime intake controls, fixed protection
 | Drawer not mounted/readable | Settings source mapping, Docker mount and UI account read/traverse permissions |
 | Scan disabled after a copy | Wait for copy Complete, refresh, and check whether files are already indexed unchanged |
 | Matching has candidates but skips | Read the log; correct metadata/edition, retry the proper mode, or use manual curation |
-| Some files match, others don't | All submitted tracks must succeed; regroup or manually curate, rather than publishing a subset |
+| Some files match, others don't | Use Partial to retain matches and review/confirm unresolved songs individually; no source song is silently dropped |
 | Approval disabled | Unapproved labels, unsaved/manual edits, an existing destination, demo mode or unavailable publisher |
 | Worker not reporting | Check `docker compose ps` and worker logs; shared SQLite/WAL/SHM permissions matter |
 | Artwork looks broken | Inspect source artwork validity; use Replace artwork on Curated output, manual cover input, or retry with fetched art |

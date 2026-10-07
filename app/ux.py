@@ -17,6 +17,9 @@ def readiness(job, record, unknown_labels, destination_exists, publisher, demo=F
     if destination_exists and job['status'] != 'Approved':
         blockers.append(dict(code='destination', message='Destination exists. No album will be replaced.'))
     prepared = not blockers
+    unverified=[t['title'] for t in (record or {}).get('tracks',[]) if t.get('match_status')=='unverified']
+    if unverified:
+        blockers.append(dict(code='track-review',message='Check unresolved track metadata and numbering: '+ '; '.join(unverified)))
     if demo:
         blockers.append(dict(code='demo', message='Demo workspace: publication is disabled.'))
     elif not publisher:

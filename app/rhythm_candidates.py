@@ -1,5 +1,6 @@
 """Beets choice hook: expose candidates; only accept an explicitly selected ID."""
 import json
+import os
 from pathlib import Path
 import re
 
@@ -35,6 +36,15 @@ class RhythmCandidatesPlugin(BeetsPlugin):
         super().__init__()
         self.config.add({'mode':'album'})
         self.register_listener('import_task_choice', self.choose)
+        self.register_listener('import_task_files', self.files)
+
+    def files(self,session,task):
+        if self.config['mode'].get(str)!='partial':return
+        path=Path(self.config['output'].as_str()).with_name('PARTIAL-MAP.json')
+        records=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+        for source,item in zip(task.old_paths,task.imported_items()):
+            records[Path(os.fsdecode(source)).name]=dict(file=os.fsdecode(item.path),matched=bool(task.match))
+        temporary=path.with_suffix('.tmp');temporary.write_text(json.dumps(records),encoding='utf-8');temporary.replace(path)
 
     def choose(self, session, task):
         if not task.is_album:
@@ -54,7 +64,10 @@ class RhythmCandidatesPlugin(BeetsPlugin):
         mode=self.config['mode'].get(str)
         if mode not in ('album','partial'):
             raise ValueError('Candidate selection requires album or partial mode')
-        if match.extra_items or (mode=='album' and match.extra_tracks):
+        if mode=='album' and (match.extra_items or match.extra_tracks):
             raise ValueError('Chosen edition has unmatched source tracks or is incomplete in complete-album mode; use partial or manual mode')
-        task.set_choice(match)
+        if mode=='partial' and not getattr(match,'mapping',True):
+            from beets.importer import Action
+            task.set_choice(Action.SKIP)  # Worker retains originals instead of importing an empty album.
+        else:task.set_choice(match)
         self._log.info('User selected MusicBrainz edition {}; preparing review only', selected)

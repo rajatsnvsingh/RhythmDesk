@@ -56,6 +56,8 @@ def publish(settings, job_id, expected_revision, approved_by='web', progress=Non
         if record['status'] != 'Curated' or revision(record) != expected_revision or record['revision'] != expected_revision:
             raise ValueError('Review changed. Reload and inspect this album before approving.')
         destination = Path(record['destination'])
+        from common import validate_track_review
+        validate_track_review(record)
         if len(destination.parts) != 2:
             raise ValueError('Expected Artist/Album (Year) destination')
         audio = safe_child(job, 'audio')

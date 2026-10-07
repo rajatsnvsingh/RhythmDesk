@@ -139,6 +139,11 @@ def clean_name(value):
     return value[:180]
 
 
+def validate_track_review(record):
+    unresolved=[t['title'] for t in record.get('tracks',[]) if t.get('match_status')=='unverified']
+    if unresolved:raise ValueError('Check and confirm unresolved track metadata before publication: '+ '; '.join(unresolved))
+
+
 def revision(record):
     values = {key: record[key] for key in ('destination', 'sha256', 'tracks')}
     if 'mode' in record:

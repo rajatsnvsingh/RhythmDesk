@@ -76,15 +76,17 @@ class CandidatesTests(unittest.TestCase):
             self.assertFalse(options.search_ids)
             self.assertFalse(options.move)
 
-    def test_selected_partial_allows_missing_catalogue_not_unmatched_sources(self):
+    def test_selected_partial_keeps_candidate_with_unmatched_sources_for_review(self):
         self.plugin.config['selected']=ID
         self.plugin.config['mode']='partial'
         self.match.extra_tracks=[object(),object()]
         self.plugin.choose(None,self.task)
         self.assertIs(self.task.choice,self.match)
         self.match.extra_items=[object()]
-        with self.assertRaisesRegex(ValueError,'unmatched source'):
-            self.plugin.choose(None,self.task)
+        self.plugin.choose(None,self.task)
+        self.assertIs(self.task.choice,self.match)
+        self.plugin.config['mode']='album'
+        with self.assertRaisesRegex(ValueError,'unmatched source'):self.plugin.choose(None,self.task)
 
     def test_retry_selected_partial_keeps_mode_and_rejects_complete(self):
         settings=Settings(self.folder);settings.initialize()
@@ -99,6 +101,24 @@ class CandidatesTests(unittest.TestCase):
             job=db.execute("SELECT * FROM jobs WHERE id='job'").fetchone()
             self.assertEqual(job['mode'],'partial');self.assertEqual(job['status'],'Queued')
         self.assertFalse(settings.library.exists())
+
+    def test_partial_files_capture_source_identity_and_only_actual_match_evidence(self):
+        self.plugin.config['mode']='partial'
+        item=SimpleNamespace(path=str(self.folder/'audio'/'mapped.flac').encode())
+        task=SimpleNamespace(old_paths=[str(self.folder/'input'/'0001.flac').encode()],match=self.match,imported_items=lambda:[item])
+        self.plugin.files(None,task)
+        evidence=json.loads((self.folder/'PARTIAL-MAP.json').read_text())
+        self.assertTrue(evidence['0001.flac']['matched'])
+        self.assertEqual(evidence['0001.flac']['file'],str(self.folder/'audio'/'mapped.flac'))
+        task.match=None;self.plugin.files(None,task)
+        self.assertFalse(json.loads((self.folder/'PARTIAL-MAP.json').read_text())['0001.flac']['matched'])
+
+    def test_zero_mapped_partial_skips_empty_beets_album_for_original_retention(self):
+        from beets.importer import Action
+        self.plugin.config['mode']='partial';self.plugin.config['selected']=ID
+        self.match.mapping={};self.match.extra_items=[object()]
+        self.plugin.choose(None,self.task)
+        self.assertEqual(self.task.choice,Action.SKIP)
 
     def test_retry_rejects_unlisted_candidate_and_only_queues(self):
         settings=Settings(self.folder);settings.initialize()

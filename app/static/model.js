@@ -6,7 +6,7 @@ const RhythmModel = (() => {
     const source = manual && !detail.review ? detail.sources : detail.review?.tracks || detail.sources;
     const tracks = source.map((t, i) => ({file:t.file, id:t.source_id || t.id, disc:Number(t.disc || 1), track:Number(t.track || i + 1),
       title:(!detail.review?t.suggested?.title:'') || t.title || t.path?.split('/').pop() || '', artist:(!detail.review?t.suggested?.artist:'') || t.artist || detail.job.artist || '',
-      genres:labels(t.genres), tags:labels(t.tags)}));
+      genres:labels(t.genres), tags:labels(t.tags),match_status:t.match_status||'',reviewed:t.match_status!=='unverified'}));
     if (manual && detail.review) tracks.forEach((t,i) => {t.id ||= detail.sources.find(s=>s.disc===t.disc&&s.track===t.track)?.id || detail.sources[i]?.id;});
     return {artist:detail.review?.tracks[0]?.albumartist || detail.sources[0]?.suggested?.albumartist || detail.job.artist || '',
       album:detail.review?.tracks[0]?.album || detail.sources[0]?.suggested?.album || detail.job.album || '', year:detail.review?.tracks[0]?.year || detail.job.year || '', tracks, artwork:''};
