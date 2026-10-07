@@ -228,6 +228,14 @@ def process_job(settings, job_id):
             directory.mkdir(exist_ok=True)
         if job['mode']=='manual' and not manual_payload:
             raise ValueError('Manual metadata is missing; enter it in the inspector')
+        excluded_sources=[]
+        original_indexes={row['id']:index for index,row in enumerate(rows,1)}
+        if job['mode']=='manual':
+            from manual import validate
+            manual_payload=validate(manual_payload,rows)
+            excluded=set(manual_payload['excluded_source_ids'])
+            excluded_sources=[dict(row,source_id=row['id']) for row in rows if row['id'] in excluded]
+            rows=[row for row in rows if row['id'] not in excluded]
         # Retries regenerate outputs, leaving original copies intact.
         for directory in (work, audio):
             shutil.rmtree(directory)
@@ -244,12 +252,12 @@ def process_job(settings, job_id):
             source = safe_child(settings.incoming, row['path'])
             if sha256(source) != row['sha256']:
                 raise ValueError(f'Input changed since scan: {row["path"]}')
-            original = originals / f'{index:04d}{source.suffix.lower()}'
+            original = originals / f'{original_indexes[row["id"]]:04d}{source.suffix.lower()}'
             if not original.exists():
                 shutil.copy2(source, original)
             if sha256(original) != row['sha256']:
                 raise ValueError('Original copy failed checksum validation')
-            target = work / original.name
+            target = work / f'{index:04d}{source.suffix.lower()}'
             shutil.copy2(original, target)
             media = MediaFile(target)
             media.albumartist = job['artist']
@@ -343,6 +351,8 @@ def process_job(settings, job_id):
             for track in record['tracks']:
                 track['source_id']=identities[(track['disc'],track['track'])]
         record['mode'] = job['mode']
+        if excluded_sources:
+            record['excluded_tracks']=excluded_sources
         if selected_candidate:
             record['selected_candidate']=selected_candidate
             record['match_selection']='User-selected catalogue edition; publication still requires approval'

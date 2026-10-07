@@ -89,6 +89,8 @@ To discard one unpublished release, open its inspector and choose **Delete relea
 
 ### Remove bonus or alternate songs
 
+Removal also works **before manual preparation**, including when unwanted bonus versions have duplicate track numbers. Click **Remove** on a row or **Remove selected songs…**, then confirm. This changes the manual draft without discarding your metadata or artwork edits. Click **Prepare manual copy** to save the selection and prepare only the remaining songs. Excluded originals stay in Incoming, and saved exclusions survive a failed preparation/reload. Closing an unsaved draft uses the usual discard confirmation.
+
 In a **Curated** album, click **Remove** beside a song, or select several rows and click **Remove selected songs…**. Review the song list, check the confirmation and remove them from the prepared copy. Save any metadata edits first, or discard them when prompted. The inspector stays open with the remaining songs.
 
 Incoming originals, recovery copies and published library music are untouched. Remaining songs keep their existing disc/track numbers and audio bytes. A complete album becomes **partial**, and the new revision requires fresh publication approval. Unverified songs that remain still need individual confirmation. At least one song must remain; use **Delete release from staging…** for an entire release. Removal does not permanently purge the source files; staging cleanup is separate. Regrouping the original sources can bring the excluded songs back.

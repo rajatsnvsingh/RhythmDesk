@@ -32,8 +32,12 @@ def validate(data, sources):
     year=int(data.get('year') or 0)
     if not 1000<=year<=9999:raise ValueError('Release year must have four digits')
     edits=data.get('tracks',[])
-    if not isinstance(edits,list) or len(edits)!=len(sources) or any(not isinstance(x,dict) or not isinstance(x.get('id'),str) for x in edits):raise ValueError('Include every source track')
-    if {x.get('id') for x in edits}!={s['id'] for s in sources}:raise ValueError('Source tracks changed; reload first')
+    excluded=data.get('excluded_source_ids',[])
+    if not isinstance(excluded,list) or any(not isinstance(x,str) for x in excluded) or len(set(excluded))!=len(excluded):raise ValueError('Invalid excluded source selection')
+    if excluded and data.get('exclusions_confirmed') is not True:raise ValueError('Confirm song exclusions before preparation')
+    if not isinstance(edits,list) or not edits or any(not isinstance(x,dict) or not isinstance(x.get('id'),str) for x in edits):raise ValueError('Keep at least one source track')
+    ids=[x['id'] for x in edits]
+    if len(set(ids))!=len(ids) or set(ids)&set(excluded) or set(ids)|set(excluded)!={s['id'] for s in sources}:raise ValueError('Source tracks changed; include or explicitly exclude every source track')
     tracks=[];positions=set()
     for edit in edits:
         title=str(edit.get('title','')).strip();track_artist=str(edit.get('artist','')).strip()
@@ -46,6 +50,7 @@ def validate(data, sources):
                            genres=labels(edit.get('genres',[])),tags=labels(edit.get('tags',[]))))
     image=cover(data.get('artwork'))
     return dict(artist=artist,album=album,year=year,tracks=tracks,
+                excluded_source_ids=excluded,exclusions_confirmed=bool(excluded),
                 artwork=base64.b64encode(image).decode() if image else '')
 
 
@@ -61,8 +66,8 @@ def queue(settings, job_id, data):
         payload=validate(data,sources)
         db.execute('INSERT OR REPLACE INTO meta VALUES(?,?)',('manual:'+job_id,json.dumps(payload)))
         db.execute('DELETE FROM meta WHERE key=?',('progress:'+job_id,))
-        db.execute("UPDATE jobs SET status='Queued',mode='manual',artist=?,album=?,year=?,release_id='',reason='',updated=? WHERE id=?",
-                   (payload['artist'],payload['album'],payload['year'],time.time(),job_id))
+        db.execute("UPDATE jobs SET status='Queued',mode='manual',artist=?,album=?,year=?,track_count=?,release_id='',reason='',updated=? WHERE id=?",
+                   (payload['artist'],payload['album'],payload['year'],len(payload['tracks']),time.time(),job_id))
     event(settings,'Manual metadata submitted; prepare working copies without catalogue matching. Approval still required.',job_id)
 
 

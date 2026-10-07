@@ -56,6 +56,41 @@ class ManualTests(unittest.TestCase):
         self.payload['tracks'][1]['track']=1
         with self.assertRaisesRegex(ValueError,'Duplicate'):queue(self.s,self.job,self.payload)
 
+    def test_explicit_exclusion_allows_duplicate_bonus_to_be_removed_before_preparation(self):
+        hashes=[sha256(p) for p in self.sources]
+        excluded=self.payload['tracks'].pop()
+        self.payload.update(excluded_source_ids=[excluded['id']],exclusions_confirmed=True)
+        queue(self.s,self.job,self.payload);process_job(self.s,self.job)
+        record=json.loads((self.s.curated/self.job/'REVIEW.json').read_text())
+        self.assertEqual(len(record['tracks']),1)
+        self.assertEqual(record['excluded_tracks'][0]['source_id'],excluded['id'])
+        self.assertEqual(hashes,[sha256(p) for p in self.sources])
+        self.assertEqual(list(self.s.library.iterdir()),[])
+        with connect(self.s) as db:
+            self.assertEqual(db.execute('SELECT track_count FROM jobs WHERE id=?',(self.job,)).fetchone()[0],1)
+        from server import Desk
+        self.assertEqual(Desk(self.s,'').detail(self.job)['manual_draft']['excluded_source_ids'],[excluded['id']])
+
+    def test_exclusions_require_confirmation_and_complete_disjoint_source_partition(self):
+        from manual import validate
+        retained=self.payload['tracks'][0];excluded=self.payload['tracks'][1]['id']
+        for overrides in [dict(tracks=[retained]),dict(tracks=[retained],excluded_source_ids=[excluded]),
+                          dict(tracks=[retained],excluded_source_ids=[excluded,excluded],exclusions_confirmed=True),
+                          dict(tracks=[retained],excluded_source_ids=[retained['id']],exclusions_confirmed=True),
+                          dict(tracks=[],excluded_source_ids=[r['id'] for r in self.rows],exclusions_confirmed=True),
+                          dict(tracks=[retained,retained],excluded_source_ids=[excluded],exclusions_confirmed=True)]:
+            with self.subTest(overrides=overrides),self.assertRaises(ValueError):validate(dict(self.payload,**overrides),self.rows)
+
+    def test_excluding_first_song_after_failed_attempt_reuses_correct_original(self):
+        queue(self.s,self.job,self.payload)
+        with patch('manual.apply',side_effect=ValueError('Simulated preparation failure')):process_job(self.s,self.job)
+        excluded=self.payload['tracks'].pop(0)
+        self.payload.update(excluded_source_ids=[excluded['id']],exclusions_confirmed=True)
+        queue(self.s,self.job,self.payload);process_job(self.s,self.job)
+        with connect(self.s) as db:self.assertEqual(db.execute('SELECT status FROM jobs WHERE id=?',(self.job,)).fetchone()[0],'Curated')
+        record=json.loads((self.s.curated/self.job/'REVIEW.json').read_text())
+        self.assertEqual(record['tracks'][0]['source_id'],self.rows[1]['id'])
+
     def test_changed_source_blocks_manual_preparation(self):
         queue(self.s,self.job,self.payload)
         with self.sources[0].open('ab') as stream:stream.write(b'changed')

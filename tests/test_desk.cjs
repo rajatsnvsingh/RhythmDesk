@@ -4,7 +4,8 @@ const review=fs.readFileSync(path.join(__dirname,'../app/static/review-tools.js'
 function removalSetup(){
   const box={hidden:true,innerHTML:'',scrollIntoView(){}},messages=[];
   const detail={job:{status:'Curated'},review:{revision:'exact-revision',tracks:[{file:'01.flac',title:'Original',disc:1,track:1},{file:'02.flac',title:'Alternate',disc:1,track:2}]}};
-  const ctx=vm.createContext({detail,songRemoval:null,$:()=>box,esc:String,feedback:m=>messages.push(m)});
+  const ctx=vm.createContext({detail,editor:{manual:false},songRemoval:null,$:()=>box,esc:String,feedback:m=>messages.push(m)});
+  vm.runInContext(review.slice(review.indexOf('function editable('),review.indexOf('function labelEditor(')),ctx);
   const start=review.indexOf('function confirmSongRemoval('),end=review.indexOf('function candidateCard(',start);
   vm.runInContext(review.slice(start,end),ctx);
   return {ctx,box,messages,run:indexes=>ctx.confirmSongRemoval(indexes)};
@@ -18,6 +19,11 @@ test('song removal preview rejects empty selection and removing the last song',(
 });
 test('published album has no song removal preview',()=>{
   const s=removalSetup();s.ctx.detail.job.status='Approved';s.run([1]);assert.equal(s.ctx.songRemoval,null);assert.equal(s.box.hidden,true);
+});
+test('manual song removal preview uses source identities and preserves unsaved edits',()=>{
+  const s=removalSetup();s.ctx.detail.review=null;s.ctx.detail.job.status='Needs review';
+  s.ctx.editor={manual:true,draft:{album:'My corrected title',tracks:[{id:'source-a',title:'Main',disc:1,track:1},{id:'source-b',title:'Bonus',disc:1,track:1}]}};
+  s.run([1]);assert.equal(s.ctx.songRemoval.manual,true);assert.deepEqual(Array.from(s.ctx.songRemoval.ids),['source-b']);assert.match(s.box.innerHTML,/other draft edits are preserved/);assert.equal(s.ctx.editor.draft.album,'My corrected title');
 });
 const stable=app.slice(app.indexOf('const renderedHTML='),app.indexOf('function cover('));
 function image(src){return {dataset:{artKey:'release'},alt:'Cover',getAttribute(){return src;},replaceWith(old){this.replacement=old;}};}

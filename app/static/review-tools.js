@@ -42,6 +42,7 @@ async function pollInspector(){
 }
 function field(key,value,label,type='text',i=null){return `<span class="field-value">${esc(value||'—')}</span><input class="edit-field" ${i===null?`data-album="${key}"`:`data-field="${key}" data-index="${i}"`} aria-label="${esc(label)}" type="${type}" value="${esc(value)}" ${['disc','track'].includes(key)?'min="1"':''} ${key==='year'?'min="1000" max="9999"':''} ${['artist','title','album','year','disc','track'].includes(key)?'required':''} ${editable()?'':'disabled'}>`;}
 function editable(){return (detail.job.status==='Curated'&&!!detail.review)||(detail.job.status==='Needs review'&&editor.manual);}
+function canRemoveSongs(){return detail.job.status==='Curated'||(editable()&&editor.manual&&!detail.review);}
 function labelEditor(t,i){
   return `<div class="row-label-editor edit-field"><div class="editable-chips">${['genres','tags'].map(kind=>`<div><small>${kind==='genres'?'Genres':'Category tags'}</small> ${t[kind].map(value=>`<button class="chip" data-chip-remove="${i}" data-kind="${kind}" data-value="${esc(value)}" aria-label="Remove ${esc(value)} from ${esc(t.title)}">${esc(value)} ×</button>`).join(' ')||'<span class="muted">—</span>'}</div>`).join('')}</div><div class="label-add"><select data-label-kind="${i}" aria-label="Label type for ${esc(t.title)}"><option value="genres">Genre</option><option value="tags">Category tag</option></select><input data-label-value="${i}" list="allowed-genres" placeholder="Search / enter label" aria-label="Add label to ${esc(t.title)}"><button class="quiet" data-chip-add="${i}">Add</button></div><input data-field="genres" data-index="${i}" aria-label="Genres for ${esc(t.title)}" value="${esc(t.genres.join('; '))}" placeholder="Expert: genres separated by semicolons"><input data-field="tags" data-index="${i}" aria-label="Category tags for ${esc(t.title)}" value="${esc(t.tags.join('; '))}" placeholder="Expert: category tags"></div>`;
 }
@@ -53,10 +54,11 @@ function trackRow(t,i,media,allowEdit){
     <td class="review-artist">${field('artist',t.artist,'Artist for '+t.title,'text',i)}</td>
     <td class="review-quality"><span>${duration(evidence.seconds)}</span><small>${esc(encoding(evidence))} · Art ${evidence.artwork?'✓':'missing'}</small></td>
     <td class="review-labels"><div class="field-value"><span class="label-prefix">Genres</span> ${chips(t.genres)}<br><span class="label-prefix">Tags</span> ${chips(t.tags)}</div>${allowEdit?labelEditor(t,i):''}</td>
-    <td class="review-controls"><button class="quiet" data-preview="${i}" aria-label="Play ${esc(t.title)}">▶</button>${allowEdit?`<button class="quiet" data-edit-row="${i}" aria-label="Edit ${esc(t.title)}">Edit</button>`:''}${detail.job.status==='Curated'?`<button class="quiet" data-remove-song="${i}" aria-label="Remove ${esc(t.title)} from prepared album">Remove</button>`:''}</td></tr>`;
+    <td class="review-controls"><button class="quiet" data-preview="${i}" aria-label="Play ${esc(t.title)}">▶</button>${allowEdit?`<button class="quiet" data-edit-row="${i}" aria-label="Edit ${esc(t.title)}">Edit</button>`:''}${canRemoveSongs()?`<button class="quiet" data-remove-song="${i}" aria-label="Remove ${esc(t.title)} from album">Remove</button>`:''}</td></tr>`;
 }
 function renderInspector(){
-  const d=detail,j=d.job,tracks=editor.draft.tracks,media=d.review?.tracks||d.sources,allowEdit=editable();
+  const artworkPreview=$('art-preview')?.getAttribute('src');
+  const d=detail,j=d.job,tracks=editor.draft.tracks,media=d.review?.tracks||tracks.map(t=>d.sources.find(s=>s.id===t.id)||{}),allowEdit=editable();
   $('review-title').textContent=editor.draft.album||'Untitled release';$('review-feedback').hidden=true;
   const first=d.review?.tracks.find(t=>t.artwork),source=d.sources.find(t=>t.artwork);
   const art=first?mediaUrl(j.id,first.file,true):source?'/api/media?'+new URLSearchParams({track:source.id,art:1}):'';
@@ -73,7 +75,8 @@ function renderInspector(){
     ${allowEdit?`<div class="artwork-tools" hidden><label class="secondary">Choose replacement cover<input id="art-file" type="file" accept="image/*"></label><div id="art-paste" tabindex="0" role="textbox" aria-label="Paste album artwork">Paste a copied image here</div><button id="art-clear" class="quiet" disabled>Clear replacement</button><img id="art-preview" class="queue-cover" alt="Replacement cover" hidden><small id="art-status">Replacements apply to every output track when saved.</small></div>`:''}
     <section class="labels-section"><div class="editor-heading"><h3>Genres & category tags</h3>${allowEdit?'<button id="show-label-create" class="text-button">Create allowed label</button>':''}</div><div id="unknown-labels"></div>${allowEdit?`<div class="label-create" hidden><label>Label type<select id="new-label-kind"><option value="genres">Genre</option><option value="tags">Category tag</option></select></label><label>Create an allowed label<input id="new-label-value" maxlength="100" placeholder="New allowed label"></label><button id="create-label" class="secondary">Create & allow globally</button></div><datalist id="allowed-genres">${d.taxonomy.genres.map(v=>`<option value="${esc(v)}"></option>`).join('')}</datalist><datalist id="allowed-tags">${d.taxonomy.tags.map(v=>`<option value="${esc(v)}"></option>`).join('')}</datalist>`:''}</section>
     ${allowEdit?`<div class="batch-bar"><label class="check-label"><input id="review-select-all" type="checkbox"> Select all ${tracks.length} tracks</label><span id="review-selection">${editor.selected.size} selected</span><div id="batch-controls" ${editor.selected.size?'':'hidden'}><label>Batch field<select id="batch-field"><option value="genres">Genres</option><option value="tags">Category tags</option><option value="artist">Track artist</option></select></label><label>Operation<select id="batch-operation"><option value="replace">Replace field</option><option value="add">Add labels · keep existing</option></select></label><label>Value<input id="batch-value" list="allowed-genres" placeholder="Search label / semicolon values / artist"></label><button id="apply-batch" class="secondary">Apply to selected draft</button><small>Only the selected field on selected tracks changes. Results appear in the rows; Save applies them to working copies.</small></div></div>`:''}
-    ${j.status==='Curated'?'<button id="remove-selected-songs" class="secondary">Remove selected songs…</button>':''}
+    ${canRemoveSongs()?'<button id="remove-selected-songs" class="secondary">Remove selected songs…</button>':''}
+    ${editor.draft.excluded_source_ids?.length?`<p class="compact-note">${tracks.length} songs remain. Excluded from manual preparation: ${d.sources.filter(s=>editor.draft.excluded_source_ids.includes(s.id)).map(s=>esc(s.title)).join(' · ')}. Originals retained. Click Prepare manual copy to save this selection.</p>`:''}
     ${d.review?.excluded_tracks?.length?`<p class="compact-note">Removed from this prepared album: ${d.review.excluded_tracks.map(t=>esc(t.title)).join(' · ')}. Incoming originals retained.</p>`:''}
     <div class="table-scroll review-table-wrap"><table class="review-table"><thead><tr><th>Select / position</th><th>Title / filename</th><th>Track artist</th><th>Length / encoding / artwork</th><th>Genres / category tags</th><th>Preview / edit / remove</th></tr></thead><tbody>${tracks.map((t,i)=>trackRow(t,i,media,allowEdit)).join('')}</tbody></table></div>
     ${j.status==='Needs review'&&d.candidates?.length?`<section class="candidate-picker"><h3>Review catalogue candidates</h3><p>Lower distance is closer. Suggestions are not verified editions. Partial mode allows catalogue tracks you do not own, but never silently drops a submitted track.</p>${d.candidates.map((c,i)=>candidateCard(c,i,j.mode)).join('')}</section>`:''}
@@ -84,6 +87,10 @@ function renderInspector(){
     <details><summary>Matching log & technical record</summary><div class="editor-heading"><p>Job: ${esc(j.id)} · Revision: ${esc(d.review?.revision||'No reviewed revision')}</p><button id="copy-matching-log" class="secondary" ${d.log?'':'disabled'}>Copy log</button></div>${d.log?`<pre class="review-log">${esc(d.log.replace(/\x1b\[[0-9;]*m/g,''))}</pre>`:'<p>No matching log yet.</p>'}</details>`;
   if($('retry-mode'))$('retry-mode').value=j.mode==='manual'?'album':j.mode;
   renderUnknown();updateEditorState();
+  if(editor.draft.artwork&&artworkPreview&&$('art-preview')){
+    $('review-body').querySelector('.artwork-tools').hidden=false;$('art-preview').src=artworkPreview;$('art-preview').hidden=false;$('art-clear').disabled=false;
+    $('art-status').textContent='Replacement selected · will update every output track when saved. Server validates the image.';
+  }
 }
 function localBlockers(){
   const blockers=[...(detail.readiness?.blockers||[])].filter(b=>!['genres','tags'].includes(b.code));
@@ -128,21 +135,25 @@ inspector.addEventListener('change',e=>{
   if(e.target.id==='batch-field'){const kind=e.target.value;$('batch-value').setAttribute('list','allowed-'+kind);$('batch-operation').querySelector('[value=add]').disabled=kind==='artist';if(kind==='artist')$('batch-operation').value='replace';}
 });
 inspector.addEventListener('click',async e=>{
-  const b=e.target.closest('button');if(!b||!editor)return;
+  const b=e.target.closest('button');if(!b||!editor||editor.busy)return;
   if(b.id==='show-artwork'){$('review-body').querySelector('.artwork-tools').hidden=false;$('art-file').focus({preventScroll:true});}
   if(b.id==='show-label-create'){$('review-body').querySelector('.label-create').hidden=false;$('new-label-value').focus({preventScroll:true});}
   if(b.dataset.editRow!==undefined){const i=Number(b.dataset.editRow);editor.rows.has(i)?editor.rows.delete(i):editor.rows.add(i);document.querySelector(`[data-row="${i}"]`).classList.toggle('row-editing',editor.rows.has(i));if(!editor.rows.has(i))syncReadValues();}
   if(b.dataset.removeSong!==undefined||b.id==='remove-selected-songs'){
     const indexes=b.dataset.removeSong!==undefined?[Number(b.dataset.removeSong)]:[...editor.selected];
-    guardDraft(()=>confirmSongRemoval(indexes));
+    if(editor.manual&&!detail.review)confirmSongRemoval(indexes);else guardDraft(()=>confirmSongRemoval(indexes));
   }
   if(b.id==='cancel-remove-songs'){songRemoval=null;$('review-feedback').hidden=true;}
   if(b.id==='confirm-remove-songs'&&$('remove-songs-check')?.checked&&songRemoval){
     const request=songRemoval;
+    if(request.manual){
+      RhythmModel.removeManual(editor.draft,request.ids);songRemoval=null;closePlayer('modal-');editor.selected=new Set();editor.rows=new Set();
+      renderInspector();toast('Songs excluded from draft. Prepare manual copy to save; originals retained.');return;
+    }
     guardDraft(async()=>{songRemoval=null;closePlayer('modal-');editor.selected=new Set();editor.rows=new Set();
       await runJobAction('remove-tracks',{revision:request.revision,files:request.files,confirmation:true});});
   }
-  if(b.dataset.preview!==undefined){const i=Number(b.dataset.preview),t=detail.review?.tracks[i],s=detail.sources[i];if(t)play(mediaUrl(editor.id,t.file),t.title,t.artist);else if(s)play('/api/media?track='+encodeURIComponent(s.id),s.title,s.artist);}
+  if(b.dataset.preview!==undefined){const i=Number(b.dataset.preview),t=detail.review?.tracks[i],s=detail.sources.find(s=>s.id===editor.draft.tracks[i]?.id);if(t)play(mediaUrl(editor.id,t.file),t.title,t.artist);else if(s)play('/api/media?track='+encodeURIComponent(s.id),s.title,s.artist);}
   if(b.id==='toggle-edit'){editor.editing=!editor.editing;$('review-body').classList.toggle('editing',editor.editing);b.textContent=editor.editing?'Read compact view':'Edit metadata';if(!editor.editing)syncReadValues();}
   if(b.id==='apply-batch'){if(!editor.selected.size){feedback('Select tracks before applying a batch change.');return;}RhythmModel.batch(editor.draft,[...editor.selected],$('batch-field').value,$('batch-value').value,$('batch-operation').value);syncReadValues();toast(`Draft updated: ${editor.selected.size} selected tracks. Save to apply to audio.`);}
   if(b.dataset.chipAdd!==undefined){const i=Number(b.dataset.chipAdd),kind=inspector.querySelector(`[data-label-kind="${i}"]`).value,value=inspector.querySelector(`[data-label-value="${i}"]`).value;if(!value.trim()){feedback('Choose or enter a label first.');return;}RhythmModel.batch(editor.draft,[i],kind,value,'add');syncReadValues();}
@@ -172,11 +183,11 @@ inspector.addEventListener('click',async e=>{
 });
 inspector.addEventListener('change',e=>{if(e.target.id==='remove-songs-check')$('confirm-remove-songs').disabled=!e.target.checked;if(e.target.id==='delete-release-check')$('confirm-delete-release').disabled=!e.target.checked;if(e.target.dataset.candidateCheck!==undefined){inspector.querySelector(`[data-choose-candidate="${e.target.dataset.candidateCheck}"]`).disabled=!e.target.checked;}if(e.target.id==='review-select-all'){editor.selected=e.target.checked?new Set(editor.draft.tracks.map((_,i)=>i)):new Set();inspector.querySelectorAll('[data-review-select]').forEach(n=>n.checked=e.target.checked);$('review-selection').textContent=`${editor.selected.size} selected`;$('batch-controls').hidden=!editor.selected.size;}});
 function confirmSongRemoval(indexes){
-  const tracks=detail.review?.tracks||[],selected=[...new Set(indexes)].map(i=>tracks[i]).filter(Boolean);
-  if(detail.job.status!=='Curated'||!selected.length){feedback('Select prepared songs to remove first.');return;}
+  const manual=!!editor?.manual&&!detail.review,tracks=manual?editor.draft.tracks:detail.review?.tracks||[],selected=[...new Set(indexes)].map(i=>tracks[i]).filter(Boolean);
+  if(!canRemoveSongs()||!selected.length){feedback('Select songs to remove first.');return;}
   if(selected.length>=tracks.length){feedback('Keep at least one song. Use Delete release from staging to remove the entire album.');return;}
-  songRemoval={revision:detail.review.revision,files:selected.map(t=>t.file)};
-  const box=$('review-feedback');box.innerHTML=`<strong>Remove ${selected.length} song(s) from the prepared album?</strong><ul>${selected.map(t=>`<li>${esc(t.disc)}.${esc(t.track)} · ${esc(t.title)}</li>`).join('')}</ul><p>${tracks.length-selected.length} songs remain, with their existing numbering. Incoming originals and published music stay untouched. Complete albums become partial; fresh publication approval is required.</p><label class="check-label"><input id="remove-songs-check" type="checkbox"> Remove these songs from this prepared copy</label><button id="confirm-remove-songs" class="secondary" disabled>Remove songs</button><button id="cancel-remove-songs" class="quiet">Cancel</button>`;box.hidden=false;box.scrollIntoView({block:'nearest'});
+  songRemoval=manual?{manual:true,ids:selected.map(t=>t.id)}:{revision:detail.review.revision,files:selected.map(t=>t.file)};
+  const box=$('review-feedback');box.innerHTML=`<strong>Remove ${selected.length} song(s) from ${manual?'the manual draft':'the prepared album'}?</strong><ul>${selected.map(t=>`<li>${esc(t.disc)}.${esc(t.track)} · ${esc(t.title)}</li>`).join('')}</ul><p>${tracks.length-selected.length} songs remain, with their existing numbering. Incoming originals and published music stay untouched. ${manual?'Your other draft edits are preserved. Click Prepare manual copy afterwards to save the selection.':'Complete albums become partial; fresh publication approval is required.'}</p><label class="check-label"><input id="remove-songs-check" type="checkbox"> Remove these songs from this ${manual?'manual draft':'prepared copy'}</label><button id="confirm-remove-songs" class="secondary" disabled>Remove songs</button><button id="cancel-remove-songs" class="quiet">Cancel</button>`;box.hidden=false;box.scrollIntoView({block:'nearest'});
 }
 function candidateCard(c,i,mode){
   const partial=!!c.missing||!!c.unmatched||mode==='partial';

@@ -178,6 +178,10 @@ class Desk:
                 raise ValueError('Job not found')
             job = dict(row)
             sources = [dict(row) for row in db.execute('SELECT * FROM tracks WHERE job_id=? ORDER BY disc,track,path', (job_id,))]
+            manual_row=db.execute('SELECT value FROM meta WHERE key=?',('manual:'+job_id,)).fetchone()
+            manual_draft=json.loads(manual_row['value']) if manual_row and job['mode']=='manual' else None
+            if manual_draft:
+                manual_draft.pop('artwork',None)  # Avoid repeatedly sending image uploads while polling.
         folder = self.job_folder(job)
         from mediafile import MediaFile
         for source in sources:
@@ -216,7 +220,7 @@ class Desk:
         found = unknown(self.settings, review['tracks']) if review else {}
         exists = bool(job['destination'] and (self.settings.library / job['destination']).exists())
         from rhythm_candidates import read_candidates
-        return {'job': job, 'review': review, 'sources': sources, 'log': log_text,
+        return {'job': job, 'review': review, 'sources': sources, 'log': log_text, 'manual_draft':manual_draft,
                 'candidates': read_candidates(folder, log_text),
                 'unknown_labels': found, 'taxonomy': __import__('taxonomy').policy(self.settings),
                 'readiness': readiness(job, review, found, exists, not self.demo and Path(self.settings.socket).exists(), self.demo),
